@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "965342433332",
+    "project_id": "apnaca-5098e",
+    "storage_bucket": "apnaca-5098e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:965342433332:android:337e4b2af889f18c007a61",
+        "android_client_info": {
+          "package_name": "com.mg.apnaca.apnaca"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwCP37cfEqTXUYH_yJpHG-kxUmI2iKp9k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
