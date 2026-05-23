@@ -9,7 +9,7 @@ import '../../core/constants/app_images.dart';
 
 import '../../core/widgets/common_widgets/app_appbar.dart';
 
-import '../ai_chat/presentation/chat_screen.dart';
+import '../ai_chat/presentation/pages/chat_screen.dart';
 import '../home/presentation/pages/home_screen.dart';
 import '../item/presentation/item_screen.dart';
 import '../purchase/presentation/purchase_screen.dart';
