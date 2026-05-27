@@ -15,6 +15,7 @@ class AuthRepository {
     required String email,
     required String mobile,
     required String password,
+    required String companyName,
   }) async {
 
     try {
@@ -36,6 +37,7 @@ class AuthRepository {
         "username": username,
         "email": email,
         "mobile": mobile,
+        'company_name': companyName,
         "created_at": FieldValue.serverTimestamp(),
 
       });

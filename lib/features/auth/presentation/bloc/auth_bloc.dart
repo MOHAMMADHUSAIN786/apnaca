@@ -1,7 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
-import '../../../../database/app_database.dart'; // ✅ AppDatabase — ek hi file
+import '../../../../core/services/sync_service.dart';
+import '../../../../database/app_database.dart';
 import '../../domain/repositories/auth_repository.dart';
 import 'auth_event.dart';
 import 'auth_state.dart';
@@ -20,6 +21,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           event.email.isEmpty ||
           event.mobile.isEmpty ||
           event.password.isEmpty ||
+          event.companyName.isEmpty||
           event.confirmPassword.isEmpty) {
         emit(AuthFailure("Please fill all fields"));
         return;
@@ -44,6 +46,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         email: event.email,
         mobile: event.mobile,
         password: event.password,
+        companyName: event.companyName,
       );
 
       if (response == "Signup Successful") {
@@ -54,31 +57,108 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     });
 
     on<LoginRequested>((event, emit) async {
+
       emit(AuthLoading());
 
-      if (event.email.isEmpty || event.password.isEmpty) {
-        emit(AuthFailure("Please enter email and password"));
+      if (event.email.isEmpty ||
+          event.password.isEmpty) {
+
+        emit(AuthFailure(
+            "Please enter email and password"));
+
         return;
       }
 
-      final response = await authRepository.login(
+      final response =
+      await authRepository.login(
         email: event.email,
         password: event.password,
       );
 
       if (response == "Login Successful") {
-        final User? currentUser = FirebaseAuth.instance.currentUser;
-        if (currentUser != null) {
-          // ✅ AppDatabase use karo — DatabaseHelper nahi
-          await AppDatabase.instance.insertOrUpdateUser({
-            'firebaseUid': currentUser.uid,
-            'email': currentUser.email ?? event.email,
-            'displayName': currentUser.displayName ?? '',
-            'createdAt': DateTime.now().toIso8601String(),
-          });
+
+        try {
+
+          final User? currentUser =
+              FirebaseAuth.instance.currentUser;
+
+          if (currentUser != null) {
+
+            // ─────────────────────────────
+            // FIRESTORE USER FETCH
+            // ─────────────────────────────
+
+            final userDoc =
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .get();
+
+            final data = userDoc.data();
+
+            // ─────────────────────────────
+            // SQLITE SAVE
+            // ─────────────────────────────
+
+            await AppDatabase.instance
+                .insertOrUpdateUser({
+
+              'firebaseUid':
+              currentUser.uid,
+
+              'email':
+              data?['email'] ?? '',
+
+              'displayName':
+              "${data?['first_name'] ?? ''} ${data?['last_name'] ?? ''}"
+                  .trim(),
+
+              'companyName':
+              data?['company_name'] ?? '',
+
+              'mobile':
+              data?['mobile'] ?? '',
+
+              'username':
+              data?['username'] ?? '',
+
+              'photo_url':
+              data?['photo_url'] ?? '',
+
+              'createdAt':
+              DateTime.now()
+                  .toIso8601String(),
+            });
+
+            // ─────────────────────────────
+            // SYNC SERVICE
+            // ─────────────────────────────
+
+            FirebaseSyncService
+                .setCurrentUser(
+                currentUser.uid);
+
+            final hasBackup =
+            await FirebaseSyncService
+                .downloadDatabase();
+
+            if (!hasBackup) {
+
+              await FirebaseSyncService
+                  .uploadDatabase();
+            }
+          }
+
+          emit(AuthSuccess(response));
+
+        } catch (e) {
+
+          emit(AuthFailure(
+              "Login sync failed: $e"));
         }
-        emit(AuthSuccess(response));
+
       } else {
+
         emit(AuthFailure(response));
       }
     });

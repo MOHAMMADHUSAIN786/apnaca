@@ -17,37 +17,26 @@ class SignupScreen extends StatefulWidget {
   SignupScreen({super.key});
 
   @override
-  State<SignupScreen> createState() =>
-      _SignupScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _SignupScreenState
-    extends State<SignupScreen> {
+class _SignupScreenState extends State<SignupScreen> {
+  final TextEditingController firstNameController = TextEditingController();
 
-  final TextEditingController firstNameController =
-  TextEditingController();
+  final TextEditingController lastNameController = TextEditingController();
 
-  final TextEditingController lastNameController =
-  TextEditingController();
+  final TextEditingController referenceNameController = TextEditingController();
 
-  final TextEditingController referenceNameController =
-  TextEditingController();
+  final TextEditingController usernameController = TextEditingController();
 
-  final TextEditingController usernameController =
-  TextEditingController();
+  final TextEditingController emailController = TextEditingController();
 
-  final TextEditingController emailController =
-  TextEditingController();
+  final TextEditingController mobileController = TextEditingController();
 
-  final TextEditingController mobileController =
-  TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
 
-  final TextEditingController passwordController =
-  TextEditingController();
-
-  final TextEditingController
-  confirmPasswordController =
-  TextEditingController();
+  final TextEditingController confirmPasswordController =
+      TextEditingController();
 
   bool isPasswordHidden = true;
 
@@ -57,18 +46,13 @@ class _SignupScreenState
 
   @override
   Widget build(BuildContext context) {
-
     return Padding(
-
       padding: const EdgeInsets.only(top: 0),
 
       child: Column(
-
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
 
         children: [
-
           AppLoginTextfield.textField(
             labelText: "First Name",
             controller: firstNameController,
@@ -80,7 +64,7 @@ class _SignupScreenState
           ),
 
           AppLoginTextfield.textField(
-            labelText: "Reference Name (Optional)",
+            labelText: "Comapny Name",
             controller: referenceNameController,
           ),
 
@@ -100,7 +84,6 @@ class _SignupScreenState
           ),
 
           AppLoginTextfield.textField(
-
             labelText: "Password",
 
             controller: passwordController,
@@ -110,96 +93,61 @@ class _SignupScreenState
             isPasswordField: true,
 
             onToggleVisibility: () {
-
               setState(() {
-
-                isPasswordHidden =
-                !isPasswordHidden;
-
+                isPasswordHidden = !isPasswordHidden;
               });
             },
           ),
 
           AppLoginTextfield.textField(
-
             labelText: "Confirm Password",
 
-            controller:
-            confirmPasswordController,
+            controller: confirmPasswordController,
 
-            obscureText:
-            isConfirmPasswordHidden,
+            obscureText: isConfirmPasswordHidden,
 
             isPasswordField: true,
 
             onToggleVisibility: () {
-
               setState(() {
-
-                isConfirmPasswordHidden =
-                !isConfirmPasswordHidden;
-
+                isConfirmPasswordHidden = !isConfirmPasswordHidden;
               });
             },
           ),
 
           Padding(
-
-            padding: EdgeInsets.only(
-              top: 18.w,
-              left: 28.w,
-              right: 28.w,
-            ),
+            padding: EdgeInsets.only(top: 18.w, left: 28.w, right: 28.w),
 
             child: Row(
-
               children: [
-
                 AppTermsRadioButton(
-
                   isSelected: isAgreed,
 
                   onTap: () {
-
                     setState(() {
-
                       isAgreed = !isAgreed;
-
                     });
                   },
                 ),
 
                 RichText(
-
                   text: TextSpan(
-
                     style: TextStyle(
-
                       fontSize: 12.sp,
 
                       color: Colors.black,
 
-                      fontFamily:
-                      app_fonts.Regular,
+                      fontFamily: app_fonts.Regular,
                     ),
 
                     children: [
-
-                      const TextSpan(
-                        text:
-                        "I read and agree to ",
-                      ),
+                      const TextSpan(text: "I read and agree to "),
 
                       TextSpan(
-
-                        text:
-                        "Terms & Conditions",
+                        text: "Terms & Conditions",
 
                         style: const TextStyle(
-
-                          decoration:
-                          TextDecoration
-                              .underline,
+                          decoration: TextDecoration.underline,
 
                           color: Colors.blue,
                         ),
@@ -212,7 +160,6 @@ class _SignupScreenState
           ),
 
           Padding(
-
             padding: EdgeInsets.only(
               top: 18.w,
               left: 28.w,
@@ -221,23 +168,15 @@ class _SignupScreenState
             ),
 
             child: LoginAppButton.appButton(
-
               label: "Sign up",
 
               height: 40.h,
 
               onPressed: () {
-
                 if (!isAgreed) {
-
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(
-
+                  ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-
-                      content: Text(
-                        "Please accept Terms & Conditions",
-                      ),
+                      content: Text("Please accept Terms & Conditions"),
                     ),
                   );
 
@@ -245,41 +184,21 @@ class _SignupScreenState
                 }
 
                 context.read<AuthBloc>().add(
-
                   SignupRequested(
+                    firstName: firstNameController.text.trim(),
 
-                    firstName:
-                    firstNameController
-                        .text
-                        .trim(),
+                    lastName: lastNameController.text.trim(),
 
-                    lastName:
-                    lastNameController
-                        .text
-                        .trim(),
+                    username: usernameController.text.trim(),
 
-                    username:
-                    usernameController
-                        .text
-                        .trim(),
+                    email: emailController.text.trim(),
 
-                    email:
-                    emailController.text
-                        .trim(),
+                    mobile: mobileController.text.trim(),
 
-                    mobile:
-                    mobileController.text
-                        .trim(),
+                    password: passwordController.text.trim(),
 
-                    password:
-                    passwordController
-                        .text
-                        .trim(),
-
-                    confirmPassword:
-                    confirmPasswordController
-                        .text
-                        .trim(),
+                    confirmPassword: confirmPasswordController.text.trim(),
+                    companyName: referenceNameController.text.trim(),
                   ),
                 );
               },

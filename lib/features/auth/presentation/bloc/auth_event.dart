@@ -8,6 +8,7 @@ class SignupRequested extends AuthEvent {
   final String mobile;
   final String password;
   final String confirmPassword;
+  final String companyName;
 
   SignupRequested({
     required this.firstName,
@@ -17,6 +18,7 @@ class SignupRequested extends AuthEvent {
     required this.mobile,
     required this.password,
     required this.confirmPassword,
+    required this.companyName,
   });
 }
 

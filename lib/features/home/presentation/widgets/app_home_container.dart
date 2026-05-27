@@ -1,4 +1,4 @@
-
+// lib/widgets/home_widgets/app_home_container.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
@@ -9,18 +9,28 @@ class AppHomeContainer extends StatelessWidget {
   final String title;
   final IconData icon;
   final Color iconBackgroundColor;
-  final Color iconColor; // 🆕 New parameter
+  final Color iconColor;
+  final double amount;
+  final double thisMonthAmount;
+  final double lastMonthAmount;
+  final double percentageChange;
 
   const AppHomeContainer({
     super.key,
     required this.title,
     required this.icon,
-    this.iconBackgroundColor = const Color(0xFFFFEBEE),
-    this.iconColor = Colors.red, // 🆕 Default icon color
+    required this.iconBackgroundColor,
+    required this.iconColor,
+    required this.amount,
+    required this.thisMonthAmount,
+    required this.lastMonthAmount,
+    required this.percentageChange,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isPositive = percentageChange >= 0;
+
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -30,7 +40,7 @@ class AppHomeContainer extends StatelessWidget {
       ),
       child: Column(
         children: [
-          /// 🟩 Inner white box
+          /// Inner white box
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -45,7 +55,7 @@ class AppHomeContainer extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style:  TextStyle(
+                      style: TextStyle(
                         fontSize: 14.sp,
                         color: Colors.black,
                         fontFamily: app_fonts.Regular,
@@ -63,40 +73,50 @@ class AppHomeContainer extends StatelessWidget {
                       ),
                       child: Icon(
                         icon,
-                        color: iconColor, // 🆕 Icon color from parameter
+                        color: iconColor,
                         size: 16,
                       ),
                     ),
                   ],
                 ),
-                 SizedBox(height: 0.h),
+                SizedBox(height: 0.h),
 
                 /// Row 2: Amount + % change
                 Row(
                   children: [
-                     Text(
-                      "0.00",
+                    Text(
+                      "₹${amount.toStringAsFixed(2)}",
                       style: TextStyle(
                         fontSize: 20.sp,
                         fontFamily: app_fonts.Regular,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                     SizedBox(width: 6.w),
+                    SizedBox(width: 6.w),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: app_colors.LightGreen,
-                        border: Border.all(color: app_colors.GreenColor),
+                        color: isPositive ? app_colors.LightGreen : app_colors.RedColor.withOpacity(0.2),
+                        border: Border.all(
+                          color: isPositive ? app_colors.GreenColor : app_colors.c_danger,
+                        ),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Row(
-                        children:  [
-                          Icon(Icons.arrow_upward, size: 12, color: app_colors.GreenColor),
+                        children: [
+                          Icon(
+                            isPositive ? Icons.arrow_upward : Icons.arrow_downward,
+                            size: 12,
+                            color: isPositive ? app_colors.GreenColor : app_colors.c_danger,
+                          ),
                           SizedBox(width: 2.w),
                           Text(
-                            "0%",
-                            style: TextStyle(fontSize: 12.sp, color: app_colors.GreenColor , fontFamily: app_fonts.Regular),
+                            "${percentageChange.toStringAsFixed(1)}%",
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              color: isPositive ? app_colors.GreenColor : app_colors.c_danger,
+                              fontFamily: app_fonts.Regular,
+                            ),
                           ),
                         ],
                       ),
@@ -107,9 +127,9 @@ class AppHomeContainer extends StatelessWidget {
             ),
           ),
 
-           SizedBox(height: 8.h),
+          SizedBox(height: 8.h),
 
-          /// 📦 Monthly Summary Section
+          /// Monthly Summary Section
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
             decoration: BoxDecoration(
@@ -117,17 +137,21 @@ class AppHomeContainer extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
-              children:  [
+              children: [
                 Row(
                   children: [
                     Text(
-                      "0.00",
-                      style: TextStyle(fontSize: 13.sp , fontFamily: app_fonts.Regular),
+                      "₹${thisMonthAmount.toStringAsFixed(2)}",
+                      style: TextStyle(fontSize: 13.sp, fontFamily: app_fonts.Regular),
                     ),
                     SizedBox(width: 4.h),
                     Text(
                       "This Month",
-                      style: TextStyle(fontSize: 13.sp, fontWeight: FontWeight.w500 , fontFamily: app_fonts.Regular),
+                      style: TextStyle(
+                        fontSize: 13.sp,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: app_fonts.Regular,
+                      ),
                     ),
                   ],
                 ),
@@ -135,13 +159,17 @@ class AppHomeContainer extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      "0.00",
-                      style: TextStyle(fontSize: 13.sp , fontFamily: app_fonts.Regular),
+                      "₹${lastMonthAmount.toStringAsFixed(2)}",
+                      style: TextStyle(fontSize: 13.sp, fontFamily: app_fonts.Regular),
                     ),
                     SizedBox(width: 4),
                     Text(
                       "Last Month",
-                      style: TextStyle(fontSize: 13.sp, fontWeight: FontWeight.w500 , fontFamily: app_fonts.Regular),
+                      style: TextStyle(
+                        fontSize: 13.sp,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: app_fonts.Regular,
+                      ),
                     ),
                   ],
                 ),
