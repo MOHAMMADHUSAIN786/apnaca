@@ -5,22 +5,17 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_fonts.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../../database/app_database.dart';
+import '../../../ai_chat/service/bill_pdf_service.dart';
 
 class AppPurchaseBillItem extends StatelessWidget {
 
   final int billId;
-
   final String billNumber;
-
   final String supplierName;
-
   final String billDate;
-
   final String totalAmount;
-
   final String paymentStatus;
-
-  final VoidCallback? onBillUpdated;
+  final VoidCallback? onBillUpdated; // ← home dashboard + purchase refresh
 
   const AppPurchaseBillItem({
     super.key,
@@ -33,397 +28,303 @@ class AppPurchaseBillItem extends StatelessWidget {
     this.onBillUpdated,
   });
 
-  Future<void> _deleteBill(
-      BuildContext context) async {
+  // ────────────────────────────────────────────────────────────────
+  //  VIEW — PDF generate & share (same as sale bill)
+  // ────────────────────────────────────────────────────────────────
+  Future<void> _viewBill(BuildContext context) async {
+    final db = AppDatabase.instance;
 
-    final shouldDelete =
-    await showDialog<bool>(
+    final billDetailMap = await db.getPurchaseBillByNumber(billNumber);
+    if (billDetailMap == null) return;
+
+    final lineItemsMap = await db.getPurchaseBillItems(billId);
+
+    final billDetail = {
+      'Bill No':  billDetailMap['bill_number'],
+      'Supplier': supplierName,
+      'Date':     billDate,
+      'Payment':  billDetailMap['payment_mode'] ?? 'cash',
+      'Status':   paymentStatus,
+      'Subtotal': '₹${(billDetailMap['subtotal'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+      'GST':      '₹${(billDetailMap['tax_amount'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+      'Total':    '₹${(billDetailMap['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+      'Notes':    billDetailMap['notes'] ?? '',
+    };
+
+    final lineItems = lineItemsMap.map((item) {
+      final taxAmount = item['tax_amount'] as num? ?? 0;
+      final lineTotal = item['line_total'] as num? ?? 0;
+      return {
+        'item':  item['item_name'],
+        'qty':   item['qty'],
+        'price': '₹${(item['unit_price'] as num).toStringAsFixed(2)}',
+        'tax':   '₹${taxAmount.toStringAsFixed(2)}',
+        'total': '₹${lineTotal.toStringAsFixed(2)}',
+      };
+    }).toList();
+
+    await BillPdfService.generateAndShare(
+      billDetail: billDetail,
+      lineItems:  lineItems,
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  //  DELETE — bill + items (CASCADE) + stock deduct back
+  // ────────────────────────────────────────────────────────────────
+  Future<void> _deleteBill(BuildContext context) async {
+    final shouldDelete = await showDialog<bool>(
       context: context,
-
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Bill'),
-
-        content: Text(
-          'Delete purchase bill $billNumber ?',
-        ),
-
+      builder: (ctx) => AlertDialog(
+        title:   const Text('Delete Bill'),
+        content: Text('Delete purchase bill $billNumber?'),
         actions: [
-
           TextButton(
-            onPressed: () =>
-                Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
-
           TextButton(
-            onPressed: () =>
-                Navigator.pop(context, true),
-
-            child: const Text(
-              'Delete',
-              style: TextStyle(
-                color: Colors.red,
-              ),
-            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
 
-    if (shouldDelete == true) {
+    if (shouldDelete != true) return;
 
-      try {
+    try {
+      final db = AppDatabase.instance;
 
-        final db = AppDatabase.instance;
+      // ── Delete bill + deduct stock (DB method handles both) ───────
+      await db.deletePurchaseBillWithStockDeduct(billId);
 
-        final dbInstance =
-        await db.database;
-
-        await dbInstance.delete(
-          'purchase_bills',
-          where: 'id = ?',
-          whereArgs: [billId],
+      // ── Refresh UI ─────────────────────────────────────────────────
+      if (context.mounted) {
+        onBillUpdated?.call(); // refreshes purchase screen + home dashboard
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Bill $billNumber deleted successfully')),
         );
-
-        if (onBillUpdated != null) {
-          onBillUpdated!();
-        }
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Bill deleted successfully',
-            ),
-          ),
-        );
-
-      } catch (e) {
-
-        ScaffoldMessenger.of(context)
-            .showSnackBar(
-          SnackBar(
-            content: Text("$e"),
-            backgroundColor: Colors.red,
-          ),
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
         );
       }
     }
   }
 
-  Future<void> _editBill(
-      BuildContext context) async {
-
-    final db = AppDatabase.instance;
-
-    final bill =
-    await db.getPurchaseBillByNumber(
-      billNumber,
-    );
-
+  // ────────────────────────────────────────────────────────────────
+  //  EDIT — payment status/mode/notes + dashboard refresh
+  // ────────────────────────────────────────────────────────────────
+  Future<void> _editBill(BuildContext context) async {
+    final db   = AppDatabase.instance;
+    final bill = await db.getPurchaseBillByNumber(billNumber);
     if (bill == null) return;
 
-    final totalController =
-    TextEditingController(
-      text: bill['total_amount']
-          .toString(),
+    final totalController = TextEditingController(
+      text: (bill['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00',
     );
+    final noteController = TextEditingController(text: bill['notes'] ?? '');
 
-    final noteController =
-    TextEditingController(
-      text: bill['notes'] ?? '',
-    );
+    // ── Sanitize: DB value agar list mein nahi hai to default use karo ──
+    const _validStatuses = ['paid', 'unpaid', 'partial'];
+    const _validModes    = ['cash', 'upi', 'bank', 'card', 'credit', 'udhar'];
 
-    String paymentStatusValue =
-        bill['payment_status'] ??
-            'unpaid';
+    final rawStatus = (bill['payment_status'] ?? 'unpaid').toString().toLowerCase().trim();
+    final rawMode   = (bill['payment_mode']   ?? 'cash').toString().toLowerCase().trim();
 
-    String paymentModeValue =
-        bill['payment_mode'] ??
-            'cash';
+    String paymentStatusValue = _validStatuses.contains(rawStatus) ? rawStatus : 'unpaid';
+    String paymentModeValue   = _validModes.contains(rawMode)      ? rawMode   : 'cash';
 
     await showDialog(
       context: context,
-
-      builder: (context) {
-
+      builder: (dialogCtx) {
         return StatefulBuilder(
-          builder: (context, setState) {
-
+          builder: (dialogCtx, setState) {
             return Dialog(
-              backgroundColor:
-              Colors.transparent,
-
+              backgroundColor: Colors.transparent,
               child: Container(
                 padding: EdgeInsets.all(18.w),
-
                 decoration: BoxDecoration(
-                  color:
-                  app_colors.Dbackgroun_color,
-
-                  borderRadius:
-                  BorderRadius.circular(
-                      18.r),
-
-                  border: Border.all(
-                    color:
-                    app_colors.Dborder_color,
-                  ),
+                  color:        app_colors.Dbackgroun_color,
+                  borderRadius: BorderRadius.circular(18.r),
+                  border:       Border.all(color: app_colors.Dborder_color),
                 ),
-
                 child: SingleChildScrollView(
                   child: Column(
-                    mainAxisSize:
-                    MainAxisSize.min,
-
+                    mainAxisSize: MainAxisSize.min,
                     children: [
 
+                      // ── HEADER ──────────────────────────────────
                       Row(
                         children: [
-
+                          Container(
+                            padding: EdgeInsets.all(10.w),
+                            decoration: BoxDecoration(
+                              color:        Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(12.r),
+                            ),
+                            child: Icon(Icons.shopping_bag_outlined, color: app_colors.black),
+                          ),
+                          SizedBox(width: 12.w),
                           Expanded(
                             child: Text(
                               "Update Purchase Bill",
-
                               style: TextStyle(
-                                fontSize: 18.sp,
-                                fontFamily:
-                                app_fonts.Medium,
+                                fontSize:   18.sp,
+                                fontFamily: app_fonts.Medium,
                               ),
                             ),
                           ),
-
                           InkWell(
-                            onTap: () {
-                              Navigator.pop(
-                                  context);
-                            },
-                            child: const Icon(
-                                Icons.close),
+                            onTap: () => Navigator.pop(dialogCtx),
+                            child: const Icon(Icons.close),
                           ),
                         ],
                       ),
 
-                      SizedBox(height: 20.h),
+                      SizedBox(height: 16.h),
 
-                      _buildField(
-                        controller:
-                        totalController,
-                        label: "Total Amount",
-                        icon:
-                        Icons.currency_rupee,
-                      ),
-
-                      SizedBox(height: 14.h),
-
-                      DropdownButtonFormField<
-                          String>(
-                        value:
-                        paymentStatusValue,
-
-                        decoration:
-                        InputDecoration(
-                          labelText:
-                          "Payment Status",
-
-                          filled: true,
-                          fillColor:
-                          Colors.white,
-
-                          border:
-                          OutlineInputBorder(
-                            borderRadius:
-                            BorderRadius
-                                .circular(
-                                12.r),
+                      // ── BILL NUMBER (read-only) ───────────────
+                      Container(
+                        width:   double.infinity,
+                        padding: EdgeInsets.all(12.w),
+                        decoration: BoxDecoration(
+                          color:        Colors.white,
+                          borderRadius: BorderRadius.circular(12.r),
+                          border:       Border.all(color: app_colors.Dborder_color),
+                        ),
+                        child: Text(
+                          "Bill No : $billNumber",
+                          style: TextStyle(
+                            fontSize:   14.sp,
+                            fontFamily: app_fonts.Medium,
                           ),
                         ),
-
-                        items: [
-                          'paid',
-                          'unpaid',
-                          'partial'
-                        ]
-                            .map(
-                              (e) =>
-                              DropdownMenuItem(
-                                value: e,
-                                child: Text(
-                                    e.toUpperCase()),
-                              ),
-                        )
-                            .toList(),
-
-                        onChanged: (v) {
-                          setState(() {
-                            paymentStatusValue =
-                            v!;
-                          });
-                        },
-                      ),
-
-                      SizedBox(height: 14.h),
-
-                      DropdownButtonFormField<
-                          String>(
-                        value:
-                        paymentModeValue,
-
-                        decoration:
-                        InputDecoration(
-                          labelText:
-                          "Payment Mode",
-
-                          filled: true,
-                          fillColor:
-                          Colors.white,
-
-                          border:
-                          OutlineInputBorder(
-                            borderRadius:
-                            BorderRadius
-                                .circular(
-                                12.r),
-                          ),
-                        ),
-
-                        items: [
-                          'cash',
-                          'upi',
-                          'bank',
-                          'card',
-                          'credit'
-                        ]
-                            .map(
-                              (e) =>
-                              DropdownMenuItem(
-                                value: e,
-                                child: Text(
-                                    e.toUpperCase()),
-                              ),
-                        )
-                            .toList(),
-
-                        onChanged: (v) {
-                          setState(() {
-                            paymentModeValue =
-                            v!;
-                          });
-                        },
                       ),
 
                       SizedBox(height: 14.h),
 
                       _buildField(
-                        controller:
-                        noteController,
-                        label: "Notes",
-                        icon: Icons.notes,
-                        maxLines: 3,
+                        controller:   totalController,
+                        label:        "Total Amount",
+                        icon:         Icons.currency_rupee,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       ),
+                      SizedBox(height: 14.h),
 
+                      // ── PAYMENT STATUS ───────────────────────
+                      DropdownButtonFormField<String>(
+                        value: paymentStatusValue,
+                        decoration: InputDecoration(
+                          labelText: "Payment Status",
+                          filled:    true,
+                          fillColor: Colors.white,
+                          border:    OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12.r),
+                          ),
+                        ),
+                        items: ['paid', 'unpaid', 'partial']
+                            .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
+                            .toList(),
+                        onChanged: (v) => setState(() => paymentStatusValue = v!),
+                      ),
+                      SizedBox(height: 14.h),
+
+                      // ── PAYMENT MODE ─────────────────────────
+                      DropdownButtonFormField<String>(
+                        value: paymentModeValue,
+                        decoration: InputDecoration(
+                          labelText: "Payment Mode",
+                          filled:    true,
+                          fillColor: Colors.white,
+                          border:    OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12.r),
+                          ),
+                        ),
+                        items: ['cash', 'upi', 'bank', 'card', 'credit', 'udhar']
+                            .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
+                            .toList(),
+                        onChanged: (v) => setState(() => paymentModeValue = v!),
+                      ),
+                      SizedBox(height: 14.h),
+
+                      _buildField(
+                        controller: noteController,
+                        label:      "Notes",
+                        icon:       Icons.notes,
+                        maxLines:   3,
+                      ),
                       SizedBox(height: 20.h),
 
                       Row(
                         children: [
-
                           Expanded(
-                            child:
-                            OutlinedButton(
-                              onPressed: () {
-                                Navigator.pop(
-                                    context);
-                              },
-                              child:
-                              const Text(
-                                  "Cancel"),
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.symmetric(vertical: 14.h),
+                                shape:   RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12.r),
+                                ),
+                              ),
+                              onPressed: () => Navigator.pop(dialogCtx),
+                              child: Text("Cancel", style: TextStyle(color: app_colors.black)),
                             ),
                           ),
-
                           SizedBox(width: 12.w),
-
                           Expanded(
-                            child:
-                            ElevatedButton(
-
-                              style:
-                              ElevatedButton
-                                  .styleFrom(
-                                backgroundColor:
-                                app_colors
-                                    .table_header_bg,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                elevation:       0,
+                                backgroundColor: app_colors.table_header_bg,
+                                padding:         EdgeInsets.symmetric(vertical: 14.h),
+                                shape:           RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12.r),
+                                ),
                               ),
-
-                              onPressed:
-                                  () async {
-
+                              onPressed: () async {
                                 try {
-
-                                  final dbInstance =
-                                  await db
-                                      .database;
-
-                                  await dbInstance
-                                      .update(
+                                  final dbRaw = await db.database;
+                                  await dbRaw.update(
                                     'purchase_bills',
                                     {
-                                      'payment_status':
-                                      paymentStatusValue,
-                                      'payment_mode':
-                                      paymentModeValue,
-                                      'total_amount':
-                                      double.tryParse(
-                                        totalController
-                                            .text,
-                                      ) ??
-                                          0,
-                                      'notes':
-                                      noteController
-                                          .text
-                                          .trim(),
+                                      'payment_status': paymentStatusValue,
+                                      'payment_mode':   paymentModeValue,
+                                      'total_amount':   double.tryParse(totalController.text) ?? 0,
+                                      'notes':          noteController.text.trim(),
                                     },
-                                    where:
-                                    'id = ?',
-                                    whereArgs: [
-                                      billId
-                                    ],
+                                    where:     'id = ?',
+                                    whereArgs: [billId],
                                   );
 
-                                  Navigator.pop(
-                                      context);
+                                  Navigator.pop(dialogCtx);
 
-                                  if (onBillUpdated !=
-                                      null) {
-                                    onBillUpdated!();
+                                  if (context.mounted) {
+                                    // ── refresh purchase list + dashboard ──
+                                    onBillUpdated?.call();
+
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text("Bill updated successfully")),
+                                    );
                                   }
-
-                                  ScaffoldMessenger
-                                      .of(context)
-                                      .showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        "Bill updated successfully",
-                                      ),
-                                    ),
-                                  );
-
                                 } catch (e) {
-
-                                  ScaffoldMessenger
-                                      .of(context)
-                                      .showSnackBar(
+                                  ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
-                                      content:
-                                      Text("$e"),
-                                      backgroundColor:
-                                      Colors.red,
+                                      content:         Text("Failed: $e"),
+                                      backgroundColor: Colors.red,
                                     ),
                                   );
                                 }
                               },
-
-                              child: const Text(
-                                  "Update"),
+                              child: Text(
+                                "Update",
+                                style: TextStyle(
+                                  color:      app_colors.black,
+                                  fontFamily: app_fonts.Medium,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -439,65 +340,38 @@ class AppPurchaseBillItem extends StatelessWidget {
     );
   }
 
+  // ────────────────────────────────────────────────────────────────
+  //  BUILD
+  // ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-
     return Padding(
-      padding: const EdgeInsets.only(
-        top: 18,
-        left: 12,
-        right: 12,
-      ),
-
+      padding: const EdgeInsets.only(top: 18, left: 12, right: 12),
       child: Container(
         padding: const EdgeInsets.all(8),
-
-        width: double.infinity,
-        height: 64.h,
-
+        width:   double.infinity,
+        height:  64.h,
         decoration: BoxDecoration(
-          color: app_colors.Dbackgroun_color,
-
-          border: Border.all(
-            color: app_colors.Dborder_color,
-          ),
-
-          borderRadius:
-          BorderRadius.circular(10.r),
+          color:        app_colors.Dbackgroun_color,
+          border:       Border.all(color: app_colors.Dborder_color),
+          borderRadius: BorderRadius.circular(10.r),
         ),
-
         child: Row(
           children: [
 
             Container(
-              width: 38.w,
-              height: 38.h,
-
+              width:  44.w,
+              height: 44.h,
               decoration: BoxDecoration(
-                color: Colors.white,
-
-                border: Border.all(
-                  color:
-                  app_colors.Dborder_color,
-                ),
-
-                borderRadius:
-                BorderRadius.circular(
-                    4.r),
+                color:        Colors.white,
+                border:       Border.all(color: app_colors.Dborder_color),
+                borderRadius: BorderRadius.circular(4.r),
               ),
-
               child: Center(
                 child: Text(
-                  billNumber.length > 4
-                      ? billNumber.substring(
-                      0, 4)
-                      : billNumber,
-
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    fontFamily:
-                    app_fonts.Bold,
-                  ),
+                  textAlign: TextAlign.center,
+                  "PB\n${billNumber.contains('-') ? billNumber.split('-').last : billNumber}",
+                  style: TextStyle(fontSize: 12.sp, fontFamily: app_fonts.Bold),
                 ),
               ),
             ),
@@ -506,170 +380,96 @@ class AppPurchaseBillItem extends StatelessWidget {
 
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
-
-                mainAxisAlignment:
-                MainAxisAlignment.center,
-
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment:  MainAxisAlignment.center,
                 children: [
-
                   Text(
                     supplierName,
-
-                    overflow:
-                    TextOverflow.ellipsis,
-
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontFamily:
-                      app_fonts.Medium,
-                    ),
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16.sp, fontFamily: app_fonts.Medium),
                   ),
-
                   SizedBox(height: 4.h),
-
                   Text(
                     billDate,
-
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      fontFamily:
-                      app_fonts.Regular,
-                    ),
+                    style: TextStyle(fontSize: 11.sp, fontFamily: app_fonts.Regular),
                   ),
                 ],
               ),
             ),
 
             Column(
-              mainAxisAlignment:
-              MainAxisAlignment.center,
-
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-
                 Container(
-                  width: 56.w,
+                  width:  56.w,
                   height: 18.h,
-
                   decoration: BoxDecoration(
-                    color:
-                    paymentStatus
-                        .toLowerCase() ==
-                        'paid'
-                        ? app_colors
-                        .LightGreen
-                        : app_colors
-                        .c_danger
-                        .withOpacity(
-                        0.2),
-
-                    borderRadius:
-                    BorderRadius.circular(
-                        4.r),
+                    color: paymentStatus.toLowerCase() == 'paid'
+                        ? app_colors.LightGreen
+                        : app_colors.c_danger.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4.r),
                   ),
-
                   child: Center(
                     child: Text(
                       paymentStatus,
-
                       style: TextStyle(
-                        fontSize: 11.sp,
-
-                        color:
-                        paymentStatus
-                            .toLowerCase() ==
-                            'paid'
-                            ? app_colors
-                            .GreenColor
-                            : app_colors
-                            .c_danger,
-
-                        fontFamily:
-                        app_fonts.Medium,
+                        fontSize:   11.sp,
+                        color:      paymentStatus.toLowerCase() == 'paid'
+                            ? app_colors.GreenColor
+                            : app_colors.c_danger,
+                        fontFamily: app_fonts.Medium,
                       ),
                     ),
                   ),
                 ),
-
                 SizedBox(height: 4.h),
-
                 Text(
                   '${app_strings.Rs}$totalAmount',
-
-                  style: TextStyle(
-                    fontSize: 11.sp,
-                    fontFamily:
-                    app_fonts.Regular,
-                  ),
+                  style: TextStyle(fontSize: 11.sp, fontFamily: app_fonts.Regular),
                 ),
               ],
             ),
 
             PopupMenuButton<String>(
-              color: app_colors.white,
-
+              color:      app_colors.white,
               onSelected: (value) {
-
-                if (value == 'edit') {
-                  _editBill(context);
-                }
-
-                else if (value ==
-                    'delete') {
-                  _deleteBill(context);
-                }
+                if (value == 'view')         _viewBill(context);
+                else if (value == 'edit')    _editBill(context);
+                else if (value == 'delete')  _deleteBill(context);
               },
-
-              itemBuilder:
-                  (context) => [
-
-                const PopupMenuItem(
-                  value: 'edit',
-
-                  child: Row(
-                    children: [
-
-                      Icon(Icons.edit,
-                          size: 18),
-
-                      SizedBox(width: 10),
-
-                      Text("Edit Bill"),
-                    ],
-                  ),
+              itemBuilder: (ctx) => [
+                PopupMenuItem<String>(
+                  height: 32,
+                  value:  'view',
+                  child:  Row(children: [
+                    Icon(Icons.remove_red_eye, size: 18, color: app_colors.black),
+                    SizedBox(width: 10.w),
+                    Text("View Bill", style: TextStyle(fontSize: 12.sp)),
+                  ]),
                 ),
-
-                const PopupMenuItem(
-                  value: 'delete',
-
-                  child: Row(
-                    children: [
-
-                      Icon(
-                        Icons.delete,
-                        size: 18,
-                        color: Colors.red,
-                      ),
-
-                      SizedBox(width: 10),
-
-                      Text(
-                        "Delete Bill",
-
-                        style: TextStyle(
-                          color: Colors.red,
-                        ),
-                      ),
-                    ],
-                  ),
+                PopupMenuItem<String>(
+                  height: 32,
+                  value:  'edit',
+                  child:  Row(children: [
+                    Icon(Icons.edit, size: 18, color: app_colors.black),
+                    SizedBox(width: 10.w),
+                    Text("Edit Bill", style: TextStyle(fontSize: 12.sp)),
+                  ]),
+                ),
+                PopupMenuItem<String>(
+                  height: 32,
+                  value:  'delete',
+                  child:  Row(children: [
+                    Icon(Icons.delete, size: 18, color: app_colors.c_danger),
+                    SizedBox(width: 10.w),
+                    Text(
+                      "Delete Bill",
+                      style: TextStyle(fontSize: 12.sp, color: app_colors.c_danger),
+                    ),
+                  ]),
                 ),
               ],
-
-              icon: Icon(
-                Icons.more_vert,
-                color: app_colors.black,
-              ),
+              icon: Icon(Icons.more_vert, color: app_colors.black),
             ),
           ],
         ),
@@ -685,23 +485,23 @@ Widget _buildField({
   TextInputType? keyboardType,
   int maxLines = 1,
 }) {
-
   return TextFormField(
-    controller: controller,
+    controller:   controller,
     keyboardType: keyboardType,
-    maxLines: maxLines,
-
+    maxLines:     maxLines,
     decoration: InputDecoration(
-      labelText: label,
-
+      labelText:  label,
       prefixIcon: Icon(icon),
-
-      filled: true,
-      fillColor: Colors.white,
-
-      border: OutlineInputBorder(
-        borderRadius:
-        BorderRadius.circular(12.r),
+      filled:     true,
+      fillColor:  Colors.white,
+      border:     OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.r),
+        borderSide:   BorderSide(color: app_colors.Dborder_color),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12.r),
+        borderSide:   BorderSide(color: app_colors.table_header_bg, width: 1.4),
       ),
     ),
   );

@@ -521,9 +521,43 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
     FirebaseSyncService.debouncedUpload();
   }
 
+  /// Sale bill delete — items ka stock restore + CASCADE delete
+  Future<void> deleteSaleBillWithStockRestore(int billId) async {
+    final db = await database;
+    // 1. Restore stock
+    final items = await getSaleBillItems(billId);
+    for (final item in items) {
+      final itemId = item['item_id'];
+      final qty    = item['qty'];
+      if (itemId != null && qty != null) {
+        await restoreItemStock(itemId as int, qty as int);
+      }
+    }
+    // 2. Delete bill (CASCADE deletes sale_bill_items)
+    await db.delete('sale_bills', where: 'id = ?', whereArgs: [billId]);
+    FirebaseSyncService.debouncedUpload();
+  }
+
   Future<void> updatePurchaseBillStatus(int billId, String status) async {
     await (await database).update('purchase_bills', {'payment_status': status},
         where: 'id = ?', whereArgs: [billId]);
+    FirebaseSyncService.debouncedUpload();
+  }
+
+  /// Purchase bill delete — items ka stock deduct back + CASCADE delete
+  Future<void> deletePurchaseBillWithStockDeduct(int billId) async {
+    final db = await database;
+    // 1. Deduct stock that was added during purchase
+    final items = await getPurchaseBillItems(billId);
+    for (final item in items) {
+      final itemId = item['item_id'];
+      final qty    = item['qty'];
+      if (itemId != null && qty != null) {
+        await deductItemStock(itemId as int, qty as int);
+      }
+    }
+    // 2. Delete bill (CASCADE deletes purchase_bill_items)
+    await db.delete('purchase_bills', where: 'id = ?', whereArgs: [billId]);
     FirebaseSyncService.debouncedUpload();
   }
 
@@ -795,4 +829,183 @@ ANALYTICS:
     return (result.first['total'] as num)
         .toDouble();
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+// ADD THESE METHODS TO AppDatabase class in app_database.dart
+// ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Top customers by total purchase ──────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getTopCustomers({int limit = 10}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.name as customer_name,
+        c.phone,
+        COUNT(sb.id) as bill_count,
+        COALESCE(SUM(sb.total_amount), 0) as total_spent,
+        COALESCE(SUM(CASE WHEN sb.payment_status = 'unpaid' OR sb.payment_status = 'partial'
+          THEN sb.total_amount ELSE 0 END), 0) as pending_amount
+      FROM customers c
+      LEFT JOIN sale_bills sb ON sb.customer_id = c.id
+      GROUP BY c.id, c.name, c.phone
+      ORDER BY total_spent DESC
+      LIMIT ?
+    ''', [limit]);
+  }
+
+  // ── Customers with pending payment ───────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getCustomersWithPending() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.name as customer_name,
+        c.phone,
+        COUNT(sb.id) as unpaid_count,
+        COALESCE(SUM(sb.total_amount), 0) as pending_amount
+      FROM customers c
+      JOIN sale_bills sb ON sb.customer_id = c.id
+      WHERE sb.payment_status = 'unpaid' OR sb.payment_status = 'partial'
+      GROUP BY c.id, c.name, c.phone
+      ORDER BY pending_amount DESC
+    ''');
+  }
+
+  // ── Customer full transaction history ────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getCustomerTransactions(String customerName) async {
+    final customer = await getCustomerByName(customerName) ?? await getCustomerFuzzy(customerName);
+    if (customer == null) return [];
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT sb.bill_number, sb.bill_date, sb.total_amount,
+             sb.payment_mode, sb.payment_status,
+             GROUP_CONCAT(sbi.item_name || ' x' || sbi.qty, ', ') as items
+      FROM sale_bills sb
+      LEFT JOIN sale_bill_items sbi ON sbi.bill_id = sb.id
+      WHERE sb.customer_id = ?
+      GROUP BY sb.id
+      ORDER BY sb.bill_date DESC
+    ''', [customer.id]);
+  }
+
+  // ── Top suppliers by total purchase ──────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getTopSuppliers({int limit = 10}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        s.name as supplier_name,
+        s.phone,
+        COUNT(pb.id) as bill_count,
+        COALESCE(SUM(pb.total_amount), 0) as total_purchased,
+        COALESCE(SUM(CASE WHEN pb.payment_status = 'unpaid' OR pb.payment_status = 'partial'
+          THEN pb.total_amount ELSE 0 END), 0) as pending_amount
+      FROM suppliers s
+      LEFT JOIN purchase_bills pb ON pb.supplier_id = s.id
+      GROUP BY s.id, s.name, s.phone
+      ORDER BY total_purchased DESC
+      LIMIT ?
+    ''', [limit]);
+  }
+
+  // ── Suppliers with pending payment ───────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getSuppliersWithPending() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        s.name as supplier_name,
+        s.phone,
+        COUNT(pb.id) as unpaid_count,
+        COALESCE(SUM(pb.total_amount), 0) as pending_amount
+      FROM suppliers s
+      JOIN purchase_bills pb ON pb.supplier_id = s.id
+      WHERE pb.payment_status = 'unpaid' OR pb.payment_status = 'partial'
+      GROUP BY s.id, s.name, s.phone
+      ORDER BY pending_amount DESC
+    ''');
+  }
+
+  // ── Supplier purchase history ─────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getSupplierTransactions(String supplierName) async {
+    final supplier = await getSupplierByName(supplierName) ?? await getSupplierFuzzy(supplierName);
+    if (supplier == null) return [];
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT pb.bill_number, pb.bill_date, pb.total_amount,
+             pb.payment_mode, pb.payment_status,
+             GROUP_CONCAT(pbi.item_name || ' x' || pbi.qty, ', ') as items
+      FROM purchase_bills pb
+      LEFT JOIN purchase_bill_items pbi ON pbi.bill_id = pb.id
+      WHERE pb.supplier_id = ?
+      GROUP BY pb.id
+      ORDER BY pb.bill_date DESC
+    ''', [supplier.id]);
+  }
+
+  // ── Unpaid purchase bills ─────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getUnpaidPurchaseBills() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT pb.bill_number, pb.bill_date, pb.total_amount,
+             pb.payment_mode, s.name as supplier_name, s.phone as supplier_phone
+      FROM purchase_bills pb
+      LEFT JOIN suppliers s ON pb.supplier_id = s.id
+      WHERE pb.payment_status = 'unpaid' OR pb.payment_status = 'partial'
+      ORDER BY pb.bill_date DESC
+    ''');
+  }
+
+  // ── Purchase summary by days ──────────────────────────────────────────────
+  Future<Map<String, dynamic>> getPurchaseSummaryByDays(int days) async {
+    final db = await database;
+    final fromStr = DateTime.now().subtract(Duration(days: days))
+        .toIso8601String().split('T')[0];
+    final result = await db.rawQuery('''
+      SELECT
+        COUNT(*) as bill_count,
+        COALESCE(SUM(total_amount), 0) as total_purchase,
+        COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END), 0) as paid_amount,
+        COALESCE(SUM(CASE WHEN payment_status = 'unpaid' THEN total_amount ELSE 0 END), 0) as unpaid_amount
+      FROM purchase_bills
+      WHERE bill_date >= ?
+    ''', [fromStr]);
+    return result.first;
+  }
+
+  // ── Most profitable items (by revenue) ───────────────────────────────────
+  Future<List<Map<String, dynamic>>> getMostProfitableItems({int limit = 10}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT sbi.item_name,
+             SUM(sbi.qty) as total_qty_sold,
+             SUM(sbi.line_total) as total_revenue,
+             AVG(sbi.unit_price) as avg_price
+      FROM sale_bill_items sbi
+      JOIN sale_bills sb ON sbi.bill_id = sb.id
+      GROUP BY sbi.item_name
+      ORDER BY total_revenue DESC
+      LIMIT ?
+    ''', [limit]);
+  }
+
+  // ── Cash vs Credit/UPI sales ──────────────────────────────────────────────
+  Future<Map<String, dynamic>> getCashVsCreditSales() async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(CASE WHEN LOWER(payment_mode) = 'cash' THEN total_amount ELSE 0 END), 0) as cash_total,
+        COALESCE(SUM(CASE WHEN LOWER(payment_mode) IN ('upi', 'gpay', 'phonepay', 'online') THEN total_amount ELSE 0 END), 0) as upi_total,
+        COALESCE(SUM(CASE WHEN LOWER(payment_mode) IN ('credit', 'udhaar', 'cheque') THEN total_amount ELSE 0 END), 0) as credit_total
+      FROM sale_bills
+    ''');
+    return result.first;
+  }
+
+  // ── Stock for single item ─────────────────────────────────────────────────
+  Future<Map<String, dynamic>?> getItemStock(String name) async {
+    final item = await getItemByName(name) ?? await getItemFuzzy(name);
+    if (item == null) return null;
+    return {'name': item.name, 'qty': item.qty ?? 0, 'price': item.price ?? 0};
+  }
+
+
+
 }

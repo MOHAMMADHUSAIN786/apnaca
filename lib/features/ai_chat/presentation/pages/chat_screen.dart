@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../../../../core/constants/app_colors.dart';
 import '../../bloc/chat_bloc.dart';
@@ -12,6 +13,7 @@ import '../../bloc/chat_state.dart';
 import '../../model/chat_models.dart';
 import '../../service/bill_pdf_service.dart';
 import '../../../subscription/presentation/pages/subscription_screen.dart';
+import 'branding_upload_widget.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -23,6 +25,77 @@ class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
   bool _hasDatabaseChanges = false;
+
+  // ── Voice (WhatsApp style: hold = record, release = send) ─────
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _speechAvailable = false;
+  bool _isListening = false;
+  String _capturedText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    _speechAvailable = await _speech.initialize(
+      onError: (e) {
+        debugPrint('Speech error: $e');
+        if (mounted) setState(() => _isListening = false);
+      },
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          if (mounted) setState(() => _isListening = false);
+        }
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Called when user presses & holds the mic button
+  Future<void> _startListening() async {
+    if (!_speechAvailable || _isListening) return;
+    _capturedText = '';
+    _controller.clear();
+    setState(() => _isListening = true);
+    await _speech.listen(
+      listenMode: stt.ListenMode.dictation,
+      partialResults: true,
+      cancelOnError: true,
+      onResult: (result) {
+        if (!mounted) return;
+        setState(() {
+          _capturedText = result.recognizedWords;
+          _controller.text = _capturedText;
+          _controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: _controller.text.length),
+          );
+        });
+      },
+    );
+  }
+
+  /// Called when user releases the mic button → stop + send
+  Future<void> _stopAndSend() async {
+    if (!_isListening) return;
+    await _speech.stop();
+    setState(() => _isListening = false);
+    if (_capturedText.trim().isNotEmpty) {
+      _controller.text = _capturedText.trim();
+      _send();
+    }
+  }
+
+  /// Called when user swipes/cancels (future: swipe left to cancel)
+  Future<void> _cancelListening() async {
+    await _speech.cancel();
+    setState(() {
+      _isListening = false;
+      _capturedText = '';
+      _controller.clear();
+    });
+  }
 
   void _send() {
     final text = _controller.text.trim();
@@ -61,6 +134,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _speech.cancel();
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
@@ -99,6 +173,20 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(child: _buildList()),
+          // ── Branding upload widget: shown only during logo/signature steps ──
+          BlocBuilder<ChatBloc, ChatState>(
+            builder: (_, state) {
+              if (state is! ChatSuccess) return const SizedBox.shrink();
+              final field = state.lastResult.askField ?? '';
+              if (field == 'logo' || state.lastResult.type == ActionResultType.needsInput && field.contains('logo')) {
+                return BrandingUploadWidget(imageType: 'logo');
+              }
+              if (field == 'signature' || state.lastResult.type == ActionResultType.needsInput && field.contains('signature')) {
+                return BrandingUploadWidget(imageType: 'signature');
+              }
+              return const SizedBox.shrink();
+            },
+          ),
           _buildInput(),
         ],
       ),
@@ -204,12 +292,65 @@ class _ChatScreenState extends State<ChatScreen> {
         top: false,
         child: Row(
           children: [
+            // Tap to start/stop recording
+            GestureDetector(
+              onTap: _speechAvailable
+                  ? () {
+                      if (_isListening) {
+                        _stopAndSend();
+                      } else {
+                        _startListening();
+                      }
+                    }
+                  : null,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 44.w,
+                height: 44.w,
+                decoration: BoxDecoration(
+                  color: _isListening
+                      ? app_colors.c_primary
+                      : app_colors.backgroun_color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _isListening
+                        ? app_colors.c_primary
+                        : app_colors.border_color,
+                  ),
+                  boxShadow: _isListening
+                      ? [
+                    BoxShadow(
+                      color: app_colors.c_primary.withOpacity(0.35),
+                      blurRadius: 12,
+                      spreadRadius: 4,
+                    )
+                  ]
+                      : [],
+                ),
+                child: _isListening
+                    ? Icon(
+                        Icons.stop_rounded,
+                        size: 20.sp,
+                        color: Colors.white,
+                      )
+                    : Icon(
+                  Icons.mic_none_rounded,
+                  size: 20.sp,
+                  color: _speechAvailable
+                      ? app_colors.c_primary
+                      : Colors.grey,
+                ),
+              ),
+            ),
+            SizedBox(width: 8.w),
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
                   color: app_colors.backgroun_color,
                   borderRadius: BorderRadius.circular(24.r),
-                  border: Border.all(color: app_colors.border_color),
+                  border: Border.all(
+                    color: _isListening ? app_colors.c_primary : app_colors.border_color,
+                  ),
                 ),
                 child: TextField(
                   controller: _controller,
@@ -218,9 +359,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   textInputAction: TextInputAction.send,
                   style: TextStyle(fontSize: 14.sp),
                   decoration: InputDecoration(
-                    hintText: 'Bill banao, items, customers...',
-                    hintStyle:
-                    TextStyle(fontSize: 13.sp, color: Colors.grey[500]),
+                    hintText: _isListening
+                        ? 'Sun raha hoon... rok ne ke liye mic dabao 🎤'
+                        : 'Bill banao, items, customers...',
+                    hintStyle: TextStyle(
+                        fontSize: 13.sp,
+                        color: _isListening ? app_colors.c_primary : Colors.grey[500]),
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(
                         horizontal: 16.w, vertical: 10.h),
@@ -229,20 +373,81 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             SizedBox(width: 8.w),
-            GestureDetector(
+            // While recording: show animated stop icon; else show send
+            _isListening
+                ? GestureDetector(
+              onTap: _stopAndSend,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 44.w,
+                height: 44.w,
+                decoration: BoxDecoration(
+                  color: app_colors.c_primary,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: app_colors.c_primary.withOpacity(0.35),
+                      blurRadius: 12,
+                      spreadRadius: 4,
+                    )
+                  ],
+                ),
+                child: Icon(Icons.send_rounded,
+                    color: Colors.white, size: 20.sp),
+              ),
+            )
+                : GestureDetector(
               onTap: _send,
               child: Container(
                 width: 44.w,
                 height: 44.w,
                 decoration: const BoxDecoration(
                     color: app_colors.c_primary, shape: BoxShape.circle),
-                child:
-                Icon(Icons.send_rounded, color: Colors.white, size: 20.sp),
+                child: Icon(Icons.send_rounded,
+                    color: Colors.white, size: 20.sp),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+// Pulsing mic animation shown while recording
+class _PulsingMic extends StatefulWidget {
+  final double size;
+  const _PulsingMic({required this.size});
+  @override
+  State<_PulsingMic> createState() => _PulsingMicState();
+}
+
+class _PulsingMicState extends State<_PulsingMic>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _anim;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 700))
+      ..repeat(reverse: true);
+    _scale = Tween<double>(begin: 0.85, end: 1.15).animate(
+        CurvedAnimation(parent: _anim, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: Icon(Icons.mic_rounded, size: widget.size, color: Colors.white),
     );
   }
 }

@@ -11,6 +11,16 @@ class BillCreationState {
   final String? paymentStatus;
   final BillStep step;
 
+  // ── Logo & Signature branding ─────────────────────────────────────────────
+  /// null  = not yet checked from Firebase Storage
+  /// ''    = checked and NOT found in Storage (first time user)
+  /// 'url' = Firebase Storage download URL (already uploaded)
+  final String? companyLogoUrl;
+  final String? signatureUrl;
+
+  /// Whether user said "nahi" to branding question this session
+  final bool brandingSkipped;
+
   const BillCreationState({
     this.customerName,
     this.items = const [],
@@ -21,10 +31,13 @@ class BillCreationState {
     this.paymentMode,
     this.paymentStatus,
     this.step = BillStep.idle,
+    this.companyLogoUrl,
+    this.signatureUrl,
+    this.brandingSkipped = false,
   });
 
   bool get isActive => step != BillStep.idle;
-  bool get isReady => step == BillStep.ready;
+  bool get isReady  => step == BillStep.ready;
 
   BillCreationState copyWith({
     String? customerName,
@@ -36,6 +49,9 @@ class BillCreationState {
     String? paymentMode,
     String? paymentStatus,
     BillStep? step,
+    String? companyLogoUrl,
+    String? signatureUrl,
+    bool? brandingSkipped,
   }) =>
       BillCreationState(
         customerName: customerName ?? this.customerName,
@@ -47,18 +63,23 @@ class BillCreationState {
         paymentMode: paymentMode ?? this.paymentMode,
         paymentStatus: paymentStatus ?? this.paymentStatus,
         step: step ?? this.step,
+        companyLogoUrl: companyLogoUrl ?? this.companyLogoUrl,
+        signatureUrl: signatureUrl ?? this.signatureUrl,
+        brandingSkipped: brandingSkipped ?? this.brandingSkipped,
       );
 
-  static const BillCreationState empty =
-  BillCreationState(step: BillStep.idle);
+  static const BillCreationState empty = BillCreationState(step: BillStep.idle);
 }
 
 enum BillStep {
   idle,
   collectingItems,
-  askingDiscount,    // "Discount dena hai? haan/nahi"
-  collectingDiscount,// "Kitna discount?"
+  askingDiscount,       // "Discount dena hai? haan/nahi"
+  collectingDiscount,   // "Kitna discount?"
   askingTax,
   askingPayment,
+  askingBranding,       // "Kya aap logo/signature add karna chahte hain?"
+  collectingLogo,       // Waiting for logo image upload
+  collectingSignature,  // Waiting for signature image upload
   ready,
 }

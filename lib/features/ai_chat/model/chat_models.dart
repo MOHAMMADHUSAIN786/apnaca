@@ -165,12 +165,12 @@ class ActionResult {
       reply: initialStep == BillStep.ready
           ? 'Bill bana raha hoon...'
           : initialStep == BillStep.collectingItems
-              ? 'Kaunsa item aur kitni quantity?\n(Example: apple 5, mango 10)'
-              : initialStep == BillStep.askingDiscount
-                  ? 'Koi discount dena hai? (haan / nahi)'
-                  : initialStep == BillStep.askingTax
-                      ? 'Tax type aur rate? (e.g. exclusive 18% / no tax)'
-                      : 'Payment kaise? (Cash / UPI / Udhaar)',
+          ? 'Kaunsa item aur kitni quantity?\n(Example: apple 5, mango 10)'
+          : initialStep == BillStep.askingDiscount
+          ? 'Koi discount dena hai? (haan / nahi)'
+          : initialStep == BillStep.askingTax
+          ? 'Tax type aur rate? (e.g. exclusive 18% / no tax)'
+          : 'Payment kaise? (Cash / UPI / Udhaar)',
       initialBillState: BillCreationState(
         customerName: customerName,
         items: items,
@@ -179,7 +179,11 @@ class ActionResult {
         taxType:       taxType       ?? 'exclusive',
         taxRate:       taxRate       ?? 0.0,
         paymentMode:   paymentMode,
-        paymentStatus: paymentStatus,
+        // Ensure udhar/credit → unpaid; cash/upi without explicit status → paid
+        paymentStatus: paymentStatus ??
+            (paymentMode == 'udhar' || paymentMode == 'credit' || paymentMode == 'cheque'
+                ? 'unpaid'
+                : paymentMode != null ? 'paid' : null),
         step:          initialStep,
       ),
     );

@@ -22,156 +22,115 @@ class HomeBloc extends Bloc<HomeEvent, HomeState> {
 
     try {
 
-      // Get all sale bills
-      final saleBills =
-      await _db.getAllSaleBills();
+      // ─── SALE BILLS ───────────────────────────────────────────────
+      final saleBills = await _db.getAllSaleBills();
 
-      double totalSale = 0;
-
+      double totalSale      = 0;
       double youWillReceive = 0;
+      double saleThisMonth  = 0;
+      double saleLastMonth  = 0;
 
-      double paidAmount = 0;
-
-      final now = DateTime.now();
-
-      final currentYear = now.year;
-
+      final now          = DateTime.now();
+      final currentYear  = now.year;
       final currentMonth = now.month;
 
-      double saleThisMonth = 0;
-
-      double saleLastMonth = 0;
-
       int lastMonthYear = currentYear;
-
-      int lastMonth = currentMonth - 1;
-
+      int lastMonth     = currentMonth - 1;
       if (lastMonth == 0) {
-        lastMonth = 12;
+        lastMonth     = 12;
         lastMonthYear = currentYear - 1;
       }
 
       for (final bill in saleBills) {
+        final amount = (bill['total_amount'] as num?)?.toDouble() ?? 0;
+        final status = (bill['payment_status']?.toString() ?? 'unpaid').toLowerCase();
 
-        final amount =
-            (bill['total_amount'] as num?)
-                ?.toDouble() ??
-                0;
-
-        final status =
-        (bill['payment_status']
-            ?.toString() ??
-            'unpaid')
-            .toLowerCase();
-
-        // TOTAL SALE
         totalSale += amount;
 
-        // YOU'LL RECEIVE
-        if (status == 'unpaid' ||
-            status == 'pending' ||
-            status == 'partial') {
-
+        // YOU'LL RECEIVE — unpaid/partial bills
+        if (status == 'unpaid' || status == 'pending' || status == 'partial') {
           youWillReceive += amount;
         }
 
-        // PAID AMOUNT
-        if (status == 'paid') {
-          paidAmount += amount;
-        }
-
-        // DATE PARSE
-
-        final billDate =
-        DateTime.tryParse(
-          bill['bill_date']
-              ?.toString() ??
-              '',
-        );
-
+        // Monthly breakdown
+        final billDate = DateTime.tryParse(bill['bill_date']?.toString() ?? '');
         if (billDate != null) {
-
-          // CURRENT MONTH
-          if (billDate.year == currentYear &&
-              billDate.month == currentMonth) {
-
+          if (billDate.year == currentYear && billDate.month == currentMonth) {
             saleThisMonth += amount;
           }
-
-          // LAST MONTH
-          if (billDate.year == lastMonthYear &&
-              billDate.month == lastMonth) {
-
+          if (billDate.year == lastMonthYear && billDate.month == lastMonth) {
             saleLastMonth += amount;
           }
         }
       }
 
-      print('=== HOME CALCULATION ===');
+      // ─── PURCHASE BILLS ───────────────────────────────────────────
+      final purchaseBills = await _db.getAllPurchaseBills();
 
-      print('Total Sale: ₹$totalSale');
+      double totalPurchase      = 0;
+      double youWillPay         = 0;
+      double purchaseThisMonth  = 0;
+      double purchaseLastMonth  = 0;
 
-      print('Paid Amount: ₹$paidAmount');
+      for (final bill in purchaseBills) {
+        final amount = (bill['total_amount'] as num?)?.toDouble() ?? 0;
+        final status = (bill['payment_status']?.toString() ?? 'unpaid').toLowerCase();
 
-      print(
-          'You Will Receive: ₹$youWillReceive');
+        totalPurchase += amount;
 
-      print('========================');
+        // YOU'LL PAY — unpaid/partial purchase bills
+        if (status == 'unpaid' || status == 'pending' || status == 'partial') {
+          youWillPay += amount;
+        }
 
+        // Monthly breakdown
+        final billDate = DateTime.tryParse(bill['bill_date']?.toString() ?? '');
+        if (billDate != null) {
+          if (billDate.year == currentYear && billDate.month == currentMonth) {
+            purchaseThisMonth += amount;
+          }
+          if (billDate.year == lastMonthYear && billDate.month == lastMonth) {
+            purchaseLastMonth += amount;
+          }
+        }
+      }
+
+      // ─── PERCENTAGE CHANGE CALCULATIONS ──────────────────────────
       double percentageChangeSale = 0;
-
       if (saleLastMonth > 0) {
-
-        percentageChangeSale =
-            ((saleThisMonth - saleLastMonth) /
-                saleLastMonth) *
-                100;
-
+        percentageChangeSale = ((saleThisMonth - saleLastMonth) / saleLastMonth) * 100;
       } else if (saleThisMonth > 0) {
-
         percentageChangeSale = 100;
+      }
+
+      double percentageChangePurchase = 0;
+      if (purchaseLastMonth > 0) {
+        percentageChangePurchase = ((purchaseThisMonth - purchaseLastMonth) / purchaseLastMonth) * 100;
+      } else if (purchaseThisMonth > 0) {
+        percentageChangePurchase = 100;
       }
 
       emit(
         HomeLoaded(
-          youWillReceive:
-          youWillReceive,
-
-          youWillPay: 0,
-
-          totalSale: totalSale,
-
-          totalPurchase: 0,
-
-          totalExpense: 0,
-
-          saleThisMonth:
-          saleThisMonth,
-
-          saleLastMonth:
-          saleLastMonth,
-
-          purchaseThisMonth: 0,
-
-          purchaseLastMonth: 0,
-
-          expenseThisMonth: 0,
-
-          expenseLastMonth: 0,
-
-          percentageChangeSale:
-          percentageChangeSale,
-
-          percentageChangePurchase: 0,
-
+          youWillReceive:          youWillReceive,
+          youWillPay:              youWillPay,
+          totalSale:               totalSale,
+          totalPurchase:           totalPurchase,
+          totalExpense:            0,
+          saleThisMonth:           saleThisMonth,
+          saleLastMonth:           saleLastMonth,
+          purchaseThisMonth:       purchaseThisMonth,
+          purchaseLastMonth:       purchaseLastMonth,
+          expenseThisMonth:        0,
+          expenseLastMonth:        0,
+          percentageChangeSale:    percentageChangeSale,
+          percentageChangePurchase: percentageChangePurchase,
           percentageChangeExpense: 0,
         ),
       );
 
     } catch (e) {
-
       print('HomeBloc Error: $e');
-
       emit(HomeError(e.toString()));
     }
   }

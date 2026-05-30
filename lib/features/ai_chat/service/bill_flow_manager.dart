@@ -1,13 +1,13 @@
 import '../model/bill_creation_state.dart';
 
 /// Pure Dart state machine for multi-turn bill creation.
-/// Handles user responses like "haa", "10%", "cash" without LLM.
-/// LLM is only called for the FIRST message to extract customer + items.
+/// LLM extracts customer + items + any known fields in first message.
+/// This class handles ONLY the missing fields — skips what AI already gave.
 class BillFlowManager {
 
-  // ────────────────────────────────────────────────────────
-  //  YES / NO detection
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  YES / NO
+  // ─────────────────────────────────────────────────────────────────
   static bool isYes(String msg) {
     final l = _clean(msg);
     const yesWords = [
@@ -28,20 +28,27 @@ class BillFlowManager {
     return noWords.any(l.contains) || l.trim() == 'na' || l.trim() == 'no';
   }
 
-  // ────────────────────────────────────────────────────────
-  //  DISCOUNT parsing
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  DISCOUNT
+  // ─────────────────────────────────────────────────────────────────
   static Map<String, dynamic>? parseDiscount(String msg) {
     final l = _clean(msg);
 
-    // Percent: "10%", "10 percent", "10 feesad", "das percent"
+    // Explicit "no discount" variants
+    if (isNo(l) ||
+        l.contains('no discount') || l.contains('discount nahi') ||
+        l.contains('bina discount') || l.contains('without discount') ||
+        l.contains('0 discount') || l.contains('zero discount') ||
+        l.contains('koi discount nahi')) {
+      return {'type': 'none', 'value': 0.0};
+    }
+
     final pct = RegExp(r'(\d+(?:\.\d+)?)\s*(?:%|percent|feesad|pratishat)')
         .firstMatch(l);
     if (pct != null) {
       return {'type': 'percent', 'value': double.parse(pct.group(1)!)};
     }
 
-    // Amount: "50 rupees", "₹100", "100 rs", "100 ka"
     final amt = RegExp(
         r'(?:rs\.?|rupees?|₹|inr)?\s*(\d+(?:\.\d+)?)\s*(?:rs\.?|rupees?|₹|off|ka|discount)?')
         .firstMatch(l);
@@ -54,17 +61,19 @@ class BillFlowManager {
     return null;
   }
 
-  // ────────────────────────────────────────────────────────
-  //  TAX parsing
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  TAX
+  // ─────────────────────────────────────────────────────────────────
   static Map<String, dynamic>? parseTax(String msg) {
     final l = _clean(msg);
 
-    // No tax
-    if (l.contains('no tax') || l.contains('tax nahi') ||
+    // No tax variants
+    if (l == 'no' || l == 'nahi' || l == 'na' ||
+        l.contains('no tax') || l.contains('tax nahi') ||
         l.contains('koi tax') || l.contains('bina tax') ||
         l.contains('without tax') || l.contains('0%') ||
-        l.contains('zero tax') || l.contains('0 percent')) {
+        l.contains('zero tax') || l.contains('0 percent') ||
+        l.contains('tax nhi') || l.contains('tax mat')) {
       return {'type': 'exclusive', 'rate': 0.0};
     }
 
@@ -72,25 +81,26 @@ class BillFlowManager {
         l.contains('shamil') || l.contains('included') || l.contains('sath');
     final taxType = isInclusive ? 'inclusive' : 'exclusive';
 
-    // Extract rate
     final rateMatch =
     RegExp(r'(\d+(?:\.\d+)?)\s*(?:%|percent|gst)').firstMatch(l);
-    final rate =
-    rateMatch != null ? double.parse(rateMatch.group(1)!) : 0.0;
+    if (rateMatch != null) {
+      final rate = double.parse(rateMatch.group(1)!);
+      return {'type': taxType, 'rate': rate};
+    }
 
-    return {'type': taxType, 'rate': rate};
+    return null;
   }
 
-  // ────────────────────────────────────────────────────────
-  //  PAYMENT parsing
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  PAYMENT
+  // ─────────────────────────────────────────────────────────────────
   static Map<String, String>? parsePayment(String msg) {
     final l = _clean(msg);
 
-    if (l.contains('udhaar') || l.contains('credit') ||
-        l.contains('baad mein') || l.contains('udhar') ||
-        l.contains('badme') || l.contains('later')) {
-      return {'mode': 'credit', 'status': 'unpaid'};
+    if (l.contains('udhaar') || l.contains('udhar') ||
+        l.contains('baad mein') || l.contains('badme') ||
+        l.contains('later') || l.contains('credit')) {
+      return {'mode': 'udhar', 'status': 'unpaid'};
     }
     if (l.contains('cheque') || l.contains('chek')) {
       return {'mode': 'cheque', 'status': 'unpaid'};
@@ -103,16 +113,12 @@ class BillFlowManager {
         l.contains('phonepe') || l.contains('paytm') ||
         l.contains('online') || l.contains('neft') ||
         l.contains('imps') || l.contains('transfer')) {
-      final status = l.contains('unpaid') || l.contains('pending')
-          ? 'unpaid'
-          : 'paid';
+      final status = l.contains('unpaid') || l.contains('pending') ? 'unpaid' : 'paid';
       return {'mode': 'upi', 'status': status};
     }
     if (l.contains('cash') || l.contains('nakit') || l.contains('nakad') ||
         l.contains('note') || l.contains('haath mein')) {
-      final status = l.contains('unpaid') || l.contains('pending')
-          ? 'unpaid'
-          : 'paid';
+      final status = l.contains('unpaid') || l.contains('pending') ? 'unpaid' : 'paid';
       return {'mode': 'cash', 'status': status};
     }
     if (l.contains('paid') || l.contains('ho gaya') ||
@@ -126,9 +132,9 @@ class BillFlowManager {
     return null;
   }
 
-  // ────────────────────────────────────────────────────────
-  //  Get next question for current step (used by chat_bloc)
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  NEXT QUESTION for current step
+  // ─────────────────────────────────────────────────────────────────
   static String? nextQuestion(BillCreationState state) {
     switch (state.step) {
       case BillStep.collectingItems:
@@ -141,49 +147,45 @@ class BillFlowManager {
         return _taxQuestion();
       case BillStep.askingPayment:
         return _paymentQuestion();
+      case BillStep.askingBranding:
+        return _brandingQuestion();
+      case BillStep.collectingLogo:
+        return '📎 Company logo ki photo bhejein (gallery se select karein):';
+      case BillStep.collectingSignature:
+        return '📎 Signature ki photo bhejein:\n(Skip karna ho to "nahi" bolein)';
       case BillStep.idle:
       case BillStep.ready:
         return null;
     }
   }
 
-  // ────────────────────────────────────────────────────────
-  //  MAIN: process user reply given current bill step
+  // ─────────────────────────────────────────────────────────────────
+  //  MAIN: process reply for current step
   //  Returns (newState, questionToAsk)
-  //  questionToAsk == null means state was not handled (send to LLM)
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
   static (BillCreationState, String?) processReply({
     required String userMessage,
     required BillCreationState state,
   }) {
     switch (state.step) {
 
-    // ── Collecting items ──────────────────────────────────
+    // ── Collecting items ────────────────────────────────────────────
       case BillStep.collectingItems:
-      // Parse items from message
         final parsed = _parseItems(userMessage);
         if (parsed.isEmpty) {
-          return (state, 'Kaunsa item aur kitni quantity?\nExample: "apple 5, mango 10" ya "5 apple aur 10 mango"');
+          return (state, 'Kaunsa item aur kitni quantity?\nExample: "apple 5, mango 10"');
         }
         final next = state.copyWith(items: parsed, step: BillStep.askingDiscount);
         return (next, 'Koi discount dena hai? (haan / nahi)');
 
-    // ── Asking discount yes/no ────────────────────────────
+    // ── Asking discount yes/no ──────────────────────────────────────
       case BillStep.askingDiscount:
-      // User might give discount value directly: "10%"
         final disc = parseDiscount(userMessage);
         if (disc != null) {
+          // User gave discount value directly OR said no discount
           final next = state.copyWith(
             discountType: disc['type'] as String,
             discountValue: disc['value'] as double,
-            step: BillStep.askingTax,
-          );
-          return (next, _taxQuestion());
-        }
-        if (isNo(userMessage)) {
-          final next = state.copyWith(
-            discountType: 'none',
-            discountValue: 0.0,
             step: BillStep.askingTax,
           );
           return (next, _taxQuestion());
@@ -192,9 +194,9 @@ class BillFlowManager {
           final next = state.copyWith(step: BillStep.collectingDiscount);
           return (next, 'Kitna discount?\nExample: "10%" ya "₹50 off"');
         }
-        return (state, 'Discount dena hai? Sirf "haan" ya "nahi" bolein.');
+        return (state, 'Discount dena hai? "haan" ya "nahi" bolein.');
 
-    // ── Collecting discount value ─────────────────────────
+    // ── Collecting discount value ───────────────────────────────────
       case BillStep.collectingDiscount:
         final disc = parseDiscount(userMessage);
         if (disc == null) {
@@ -207,11 +209,11 @@ class BillFlowManager {
         );
         return (next, _taxQuestion());
 
-    // ── Asking tax ────────────────────────────────────────
+    // ── Asking tax ──────────────────────────────────────────────────
       case BillStep.askingTax:
         final tax = parseTax(userMessage);
         if (tax == null) {
-          return (state, 'Tax type samajh nahi aaya.\nBolein: "exclusive 18%" ya "inclusive 5%" ya "no tax"');
+          return (state, 'Tax samajh nahi aaya.\nBolein: "exclusive 18%" ya "inclusive 5%" ya "no tax"');
         }
         final next = state.copyWith(
           taxType: tax['type'] as String,
@@ -220,7 +222,7 @@ class BillFlowManager {
         );
         return (next, _paymentQuestion());
 
-    // ── Asking payment ────────────────────────────────────
+    // ── Asking payment ──────────────────────────────────────────────
       case BillStep.askingPayment:
         final payment = parsePayment(userMessage);
         if (payment == null) {
@@ -229,23 +231,64 @@ class BillFlowManager {
         final next = state.copyWith(
           paymentMode: payment['mode'],
           paymentStatus: payment['status'],
-          step: BillStep.ready,
+          step: BillStep.askingBranding,
         );
-        return (next, null); // null = state is ready, create bill now
+        return (next, null); // null = ChatBloc handles Firebase Storage check
+
+    // ── Asking branding ─────────────────────────────────────────────
+      case BillStep.askingBranding:
+        if (isNo(userMessage)) {
+          return (
+          state.copyWith(brandingSkipped: true, step: BillStep.ready),
+          null,
+          );
+        }
+        if (isYes(userMessage)) {
+          return (
+          state.copyWith(step: BillStep.collectingLogo),
+          '📎 Company logo ki photo bhejein (gallery se select karein):',
+          );
+        }
+        return (state, _brandingQuestion());
+
+    // ── Logo / Signature — text reply = skip ───────────────────────
+      case BillStep.collectingLogo:
+      case BillStep.collectingSignature:
+        final shouldSkip = isNo(userMessage) ||
+            userMessage.toLowerCase().contains('skip') ||
+            userMessage.toLowerCase().contains('nahi') ||
+            userMessage.toLowerCase().contains('nai');
+
+        if (shouldSkip) {
+          if (state.step == BillStep.collectingLogo) {
+            return (
+            state.copyWith(companyLogoUrl: '', step: BillStep.collectingSignature),
+            '📎 Signature ki photo bhejein:\n(Skip karna ho to "nahi" bolein)',
+            );
+          } else {
+            return (
+            state.copyWith(signatureUrl: '', step: BillStep.ready),
+            null,
+            );
+          }
+        }
+        final prompt = state.step == BillStep.collectingLogo
+            ? '📎 Logo ki photo bhejein, ya "nahi" bolein skip ke liye.'
+            : '📎 Signature ki photo bhejein, ya "nahi" bolein skip ke liye.';
+        return (state, prompt);
 
       case BillStep.idle:
       case BillStep.ready:
-        return (state, null); // not handled by flow manager
+        return (state, null);
     }
   }
 
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
   //  ITEM PARSING from free text
-  // ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────
   static List<Map<String, dynamic>> _parseItems(String msg) {
     final items = <Map<String, dynamic>>[];
 
-    // Split on comma, "aur", "or", "and", "+"
     final parts = msg
         .split(RegExp(r',|aur\b|or\b|and\b|\+', caseSensitive: false))
         .map((s) => s
@@ -258,7 +301,7 @@ class BillFlowManager {
         .toList();
 
     for (final part in parts) {
-      // "qty name" → "5 apple"
+      // "5 apple" format
       final qtyFirst = RegExp(r'^(\d+)\s+(.+)$').firstMatch(part);
       if (qtyFirst != null) {
         final qty = int.tryParse(qtyFirst.group(1)!);
@@ -268,7 +311,7 @@ class BillFlowManager {
           continue;
         }
       }
-      // "name qty" → "apple 5"
+      // "apple 5" format
       final nameFirst = RegExp(r'^(.+?)\s+(\d+)$').firstMatch(part);
       if (nameFirst != null) {
         final name = nameFirst.group(1)!.trim();
@@ -299,8 +342,14 @@ class BillFlowManager {
       'Payment kaise hui?\n'
           '• Cash\n'
           '• UPI / GPay / PhonePe\n'
-          '• Udhaar (credit, baad mein payment)\n'
+          '• Udhaar (baad mein payment)\n'
           '• Cheque';
+
+  static String _brandingQuestion() =>
+      '🏢 Kya aap bill mein company logo aur signature add karna chahte hain?\n'
+          '(Ek baar upload karo, hamesha automatically lagega)\n\n'
+          '• "Haan" — logo/signature add karein\n'
+          '• "Nahi" — skip karein';
 
   static String _clean(String msg) => msg.toLowerCase().trim();
 }

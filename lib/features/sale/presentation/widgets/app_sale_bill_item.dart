@@ -18,7 +18,7 @@ class AppSaleBillItem extends StatelessWidget {
   final String billDate;
   final String totalAmount;
   final String paymentStatus;
-  final VoidCallback? onBillUpdated;
+  final VoidCallback? onBillUpdated; // ← dashboard + sale refresh ke liye
 
   const AppSaleBillItem({
     super.key,
@@ -31,19 +31,22 @@ class AppSaleBillItem extends StatelessWidget {
     this.onBillUpdated,
   });
 
+  // ────────────────────────────────────────────────────────────────
+  //  DELETE — bill + items (CASCADE) + stock restore
+  // ────────────────────────────────────────────────────────────────
   Future<void> _deleteBill(BuildContext context) async {
     final shouldDelete = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Delete Bill'),
         content: Text('Are you sure you want to delete bill $billNumber?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
           ),
@@ -51,121 +54,110 @@ class AppSaleBillItem extends StatelessWidget {
       ),
     );
 
-    if (shouldDelete == true) {
-      final db = AppDatabase.instance;
+    if (shouldDelete != true) return;
 
-      // Delete all items first (due to cascade, but we'll explicitly delete)
-      final items = await db.getSaleBillItems(billId);
-      for (final item in items) {
-        // Restore stock if needed (optional)
-         await db.restoreItemStock(item['item_id'], item['qty']);
-      }
+    final db = AppDatabase.instance;
 
-      // Delete the bill (cascade will delete sale_bill_items automatically)
-      final dbInstance = await db.database;
-      await dbInstance.delete('sale_bills', where: 'id = ?', whereArgs: [billId]);
+    // ── Delete bill + restore stock (DB method handles both) ──────
+    await db.deleteSaleBillWithStockRestore(billId);
 
-      // Refresh the list
-      if (context.mounted) {
-        context.read<SaleBloc>().add(FetchSaleBills());
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Bill $billNumber deleted successfully')),
-        );
-      }
+    // ── Refresh UI ─────────────────────────────────────────────────
+    if (context.mounted) {
+      context.read<SaleBloc>().add(FetchSaleBills());
+      onBillUpdated?.call(); // refreshes home dashboard + purchase screen
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bill $billNumber deleted successfully')),
+      );
     }
   }
 
+  // ────────────────────────────────────────────────────────────────
+  //  VIEW — PDF share
+  // ────────────────────────────────────────────────────────────────
   Future<void> _viewBill(BuildContext context) async {
-    final db = AppDatabase.instance;
-
-    // Fetch bill details
+    final db         = AppDatabase.instance;
     final billDetailMap = await db.getSaleBillById(billId);
     if (billDetailMap == null) return;
 
-    // Fetch line items
     final lineItemsMap = await db.getSaleBillItems(billId);
 
-    // Format for PDF service
     final billDetail = {
-      'Bill No': billDetailMap['bill_number'],
+      'Bill No':  billDetailMap['bill_number'],
       'Customer': partyName,
-      'Date': billDate,
-      'Payment': billDetailMap['payment_mode'] ?? 'cash',
-      'Status': paymentStatus,
+      'Date':     billDate,
+      'Payment':  billDetailMap['payment_mode'] ?? 'cash',
+      'Status':   paymentStatus,
       'Subtotal': '₹${billDetailMap['subtotal']?.toStringAsFixed(2) ?? '0.00'}',
-      'GST': '₹${billDetailMap['gst_amount']?.toStringAsFixed(2) ?? '0.00'}',
-      'Total': '₹${billDetailMap['total_amount']?.toStringAsFixed(2) ?? '0.00'}',
-      'Notes': billDetailMap['notes'] ?? '',
+      'GST':      '₹${billDetailMap['gst_amount']?.toStringAsFixed(2) ?? '0.00'}',
+      'Total':    '₹${billDetailMap['total_amount']?.toStringAsFixed(2) ?? '0.00'}',
+      'Notes':    billDetailMap['notes'] ?? '',
     };
 
     final lineItems = lineItemsMap.map((item) {
-      final taxAmount = item['tax_amount'] as num? ?? 0;
-      final lineTotal = item['line_total'] as num? ?? 0;
+      final taxAmount  = item['tax_amount'] as num? ?? 0;
+      final lineTotal  = item['line_total'] as num? ?? 0;
       return {
-        'item': item['item_name'],
-        'qty': item['qty'],
+        'item':  item['item_name'],
+        'qty':   item['qty'],
         'price': '₹${(item['unit_price'] as num).toStringAsFixed(2)}',
-        'tax': '₹${taxAmount.toStringAsFixed(2)}',
+        'tax':   '₹${taxAmount.toStringAsFixed(2)}',
         'total': '₹${lineTotal.toStringAsFixed(2)}',
       };
     }).toList();
 
-    // Generate and share PDF
     await BillPdfService.generateAndShare(
       billDetail: billDetail,
-      lineItems: lineItems,
+      lineItems:  lineItems,
     );
   }
 
+  // ────────────────────────────────────────────────────────────────
+  //  EDIT — payment status/mode/notes + dashboard refresh
+  // ────────────────────────────────────────────────────────────────
   Future<void> _editBill(BuildContext context) async {
     final saleBloc = context.read<SaleBloc>();
-
-    final db = AppDatabase.instance;
+    final db       = AppDatabase.instance;
 
     final billData = await db.getSaleBillById(billId);
-
     if (billData == null) return;
 
     final customerController = TextEditingController(
       text: billData['customer_name'] ?? '',
     );
-
     final totalController = TextEditingController(
-      text: billData['total_amount'].toString(),
+      text: (billData['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00',
     );
-
     final noteController = TextEditingController(
       text: billData['notes'] ?? '',
     );
 
-    String paymentStatusValue =
-        billData['payment_status'] ?? 'unpaid';
+    // ── Sanitize: DB value agar list mein nahi hai to default use karo ──
+    const _validStatuses = ['paid', 'unpaid', 'partial'];
+    const _validModes    = ['cash', 'upi', 'bank', 'card', 'credit', 'udhar'];
 
-    String paymentModeValue =
-        billData['payment_mode'] ?? 'cash';
+    final rawStatus = (billData['payment_status'] ?? 'unpaid').toString().toLowerCase().trim();
+    final rawMode   = (billData['payment_mode']   ?? 'cash').toString().toLowerCase().trim();
+
+    String paymentStatusValue = _validStatuses.contains(rawStatus) ? rawStatus : 'unpaid';
+    String paymentModeValue   = _validModes.contains(rawMode)      ? rawMode   : 'cash';
 
     final formKey = GlobalKey<FormState>();
 
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) {
-
+      builder: (dialogCtx) {
         return StatefulBuilder(
-          builder: (context, setState) {
-
+          builder: (dialogCtx, setState) {
             return Dialog(
               backgroundColor: Colors.transparent,
               child: Container(
                 padding: EdgeInsets.all(18.w),
                 decoration: BoxDecoration(
-                  color: app_colors.Dbackgroun_color,
+                  color:        app_colors.Dbackgroun_color,
                   borderRadius: BorderRadius.circular(18.r),
-                  border: Border.all(
-                    color: app_colors.Dborder_color,
-                  ),
+                  border:       Border.all(color: app_colors.Dborder_color),
                 ),
-
                 child: SingleChildScrollView(
                   child: Form(
                     key: formKey,
@@ -173,38 +165,30 @@ class AppSaleBillItem extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
 
-                        // HEADER
+                        // ── HEADER ──────────────────────────────────
                         Row(
                           children: [
-
                             Container(
                               padding: EdgeInsets.all(10.w),
                               decoration: BoxDecoration(
-                                color: Colors.blue.shade50,
-                                borderRadius:
-                                BorderRadius.circular(12.r),
+                                color:        Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(12.r),
                               ),
-                              child: Icon(
-                                Icons.receipt_long,
-                                color: app_colors.black,
-                              ),
+                              child: Icon(Icons.receipt_long, color: app_colors.black),
                             ),
-
                             SizedBox(width: 12.w),
-
                             Expanded(
                               child: Text(
                                 "Update Sale Bill",
                                 style: TextStyle(
-                                  fontSize: 18.sp,
+                                  fontSize:   18.sp,
                                   fontFamily: app_fonts.Medium,
-                                  color: app_colors.black,
+                                  color:      app_colors.black,
                                 ),
                               ),
                             ),
-
                             InkWell(
-                              onTap: () => Navigator.pop(context),
+                              onTap: () => Navigator.pop(dialogCtx),
                               child: const Icon(Icons.close),
                             ),
                           ],
@@ -212,22 +196,19 @@ class AppSaleBillItem extends StatelessWidget {
 
                         SizedBox(height: 22.h),
 
-                        // BILL NUMBER
+                        // ── BILL NUMBER (read-only) ───────────────
                         Container(
-                          width: double.infinity,
+                          width:   double.infinity,
                           padding: EdgeInsets.all(12.w),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius:
-                            BorderRadius.circular(12.r),
-                            border: Border.all(
-                              color: app_colors.Dborder_color,
-                            ),
+                            color:        Colors.white,
+                            borderRadius: BorderRadius.circular(12.r),
+                            border:       Border.all(color: app_colors.Dborder_color),
                           ),
                           child: Text(
                             "Bill No : $billNumber",
                             style: TextStyle(
-                              fontSize: 14.sp,
+                              fontSize:   14.sp,
                               fontFamily: app_fonts.Medium,
                             ),
                           ),
@@ -235,194 +216,122 @@ class AppSaleBillItem extends StatelessWidget {
 
                         SizedBox(height: 14.h),
 
-                        // CUSTOMER
                         _buildField(
-                          controller: customerController,
-                          label: "Customer Name",
-                          icon: Icons.person,
+                          controller:  customerController,
+                          label:       "Customer Name",
+                          icon:        Icons.person,
                         ),
-
                         SizedBox(height: 14.h),
 
-                        // TOTAL
                         _buildField(
-                          controller: totalController,
-                          label: "Total Amount",
-                          icon: Icons.currency_rupee,
-                          keyboardType:
-                          const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
+                          controller:   totalController,
+                          label:        "Total Amount",
+                          icon:         Icons.currency_rupee,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         ),
-
                         SizedBox(height: 14.h),
 
-                        // PAYMENT STATUS
+                        // ── PAYMENT STATUS ───────────────────────
                         DropdownButtonFormField<String>(
                           value: paymentStatusValue,
                           decoration: InputDecoration(
                             labelText: "Payment Status",
-                            filled: true,
+                            filled:    true,
                             fillColor: Colors.white,
-                            border: OutlineInputBorder(
+                            border:    OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12.r),
                             ),
                           ),
                           items: ['paid', 'unpaid', 'partial']
-                              .map(
-                                (e) => DropdownMenuItem(
-                              value: e,
-                              child: Text(e.toUpperCase()),
-                            ),
-                          )
+                              .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
                               .toList(),
-                          onChanged: (v) {
-                            setState(() {
-                              paymentStatusValue = v!;
-                            });
-                          },
+                          onChanged: (v) => setState(() => paymentStatusValue = v!),
                         ),
-
                         SizedBox(height: 14.h),
 
-                        // PAYMENT MODE
+                        // ── PAYMENT MODE ─────────────────────────
                         DropdownButtonFormField<String>(
                           value: paymentModeValue,
                           decoration: InputDecoration(
                             labelText: "Payment Mode",
-                            filled: true,
+                            filled:    true,
                             fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius:
-                              BorderRadius.circular(12.r),
+                            border:    OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12.r),
                             ),
                           ),
-                          items: ['cash', 'upi', 'bank', 'card', 'credit']
-                              .map(
-                                (e) => DropdownMenuItem(
-                              value: e,
-                              child: Text(e.toUpperCase()),
-                            ),
-                          )
+                          items: ['cash', 'upi', 'bank', 'card', 'credit', 'udhar']
+                              .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
                               .toList(),
-                          onChanged: (v) {
-                            setState(() {
-                              paymentModeValue = v!;
-                            });
-                          },
+                          onChanged: (v) => setState(() => paymentModeValue = v!),
                         ),
-
                         SizedBox(height: 14.h),
 
-                        // NOTES
                         _buildField(
                           controller: noteController,
-                          label: "Notes",
-                          icon: Icons.notes,
-                          maxLines: 3,
+                          label:      "Notes",
+                          icon:       Icons.notes,
+                          maxLines:   3,
                         ),
-
                         SizedBox(height: 24.h),
 
                         Row(
                           children: [
-
-                            // CANCEL
                             Expanded(
                               child: OutlinedButton(
                                 style: OutlinedButton.styleFrom(
-                                  padding: EdgeInsets.symmetric(
-                                    vertical: 14.h,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                    BorderRadius.circular(12.r),
+                                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                                  shape:   RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12.r),
                                   ),
                                 ),
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                },
-                                child: Text(
-                                  "Cancel",
-                                  style: TextStyle(
-                                    color: app_colors.black,
-                                  ),
-                                ),
+                                onPressed: () => Navigator.pop(dialogCtx),
+                                child: Text("Cancel", style: TextStyle(color: app_colors.black)),
                               ),
                             ),
-
                             SizedBox(width: 12.w),
-
-                            // UPDATE
                             Expanded(
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  elevation: 0,
-                                  backgroundColor:
-                                  app_colors.table_header_bg,
-                                  padding: EdgeInsets.symmetric(
-                                    vertical: 14.h,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                    BorderRadius.circular(12.r),
+                                  elevation:       0,
+                                  backgroundColor: app_colors.table_header_bg,
+                                  padding:         EdgeInsets.symmetric(vertical: 14.h),
+                                  shape:           RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12.r),
                                   ),
                                 ),
                                 onPressed: () async {
-
                                   try {
-
-                                    final dbInstance =
-                                    await db.database;
-
-                                    await dbInstance.update(
+                                    final dbRaw = await db.database;
+                                    await dbRaw.update(
                                       'sale_bills',
                                       {
-                                        'payment_status':
-                                        paymentStatusValue,
-                                        'payment_mode':
-                                        paymentModeValue,
-                                        'total_amount':
-                                        double.tryParse(
-                                          totalController.text,
-                                        ) ??
-                                            0,
-                                        'notes':
-                                        noteController.text.trim(),
+                                        'payment_status': paymentStatusValue,
+                                        'payment_mode':   paymentModeValue,
+                                        'total_amount':   double.tryParse(totalController.text) ?? 0,
+                                        'notes':          noteController.text.trim(),
                                       },
-                                      where: 'id = ?',
+                                      where:     'id = ?',
                                       whereArgs: [billId],
                                     );
 
-                                    Navigator.pop(context);
+                                    Navigator.pop(dialogCtx);
 
                                     if (context.mounted) {
-
+                                      // ── refresh sale list ──────────────────
                                       saleBloc.add(FetchSaleBills());
+                                      // ── refresh dashboard + other screens ─
+                                      onBillUpdated?.call();
 
-                                      if (onBillUpdated != null) {
-                                        onBillUpdated!();
-                                      }
-
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Bill updated successfully",
-                                          ),
-                                        ),
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text("Bill updated successfully")),
                                       );
                                     }
-
                                   } catch (e) {
-
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(
+                                    ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content:
-                                        Text("Failed: $e"),
-                                        backgroundColor:
-                                        Colors.red,
+                                        content:         Text("Failed: $e"),
+                                        backgroundColor: Colors.red,
                                       ),
                                     );
                                   }
@@ -430,14 +339,14 @@ class AppSaleBillItem extends StatelessWidget {
                                 child: Text(
                                   "Update",
                                   style: TextStyle(
-                                    color: app_colors.black,
+                                    color:      app_colors.black,
                                     fontFamily: app_fonts.Medium,
                                   ),
                                 ),
                               ),
                             ),
                           ],
-                        )
+                        ),
                       ],
                     ),
                   ),
@@ -450,38 +359,41 @@ class AppSaleBillItem extends StatelessWidget {
     );
   }
 
+  // ────────────────────────────────────────────────────────────────
+  //  BUILD
+  // ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 18, left: 12, right: 12),
       child: Container(
         padding: const EdgeInsets.all(8),
-        width: double.infinity,
-        height: 64.h,
+        width:   double.infinity,
+        height:  64.h,
         decoration: BoxDecoration(
-          color: app_colors.Dbackgroun_color,
-          border: Border.all(color: app_colors.Dborder_color),
+          color:        app_colors.Dbackgroun_color,
+          border:       Border.all(color: app_colors.Dborder_color),
           borderRadius: BorderRadius.circular(10.r),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Bill Code Box
+            // Bill code box
             Container(
-              width: 38.w,
-              height: 38.h,
+              width:  44.w,
+              height: 44.h,
               decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: app_colors.Dborder_color),
+                color:        Colors.white,
+                border:       Border.all(color: app_colors.Dborder_color),
                 borderRadius: BorderRadius.circular(4.r),
               ),
               child: Center(
                 child: Text(
-                  billNumber.length > 4 ? billNumber.substring(0, 4) : billNumber,
+                  "SB\n${billNumber.contains('-') ? billNumber.split('-').last : billNumber}",
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 12.sp,
-                    color: app_colors.black,
+                    fontSize:   12.sp,
+                    color:      app_colors.black,
                     fontFamily: app_fonts.Bold,
                   ),
                 ),
@@ -489,18 +401,18 @@ class AppSaleBillItem extends StatelessWidget {
             ),
             SizedBox(width: 12.w),
 
-            // Party Name and Date
+            // Party name + date
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment:  MainAxisAlignment.center,
                 children: [
                   Text(
                     partyName,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 16.sp,
-                      color: Colors.black,
+                      fontSize:   16.sp,
+                      color:      Colors.black,
                       fontFamily: app_fonts.Medium,
                     ),
                   ),
@@ -508,8 +420,8 @@ class AppSaleBillItem extends StatelessWidget {
                   Text(
                     billDate,
                     style: TextStyle(
-                      fontSize: 11.sp,
-                      color: Colors.black,
+                      fontSize:   11.sp,
+                      color:      Colors.black,
                       fontFamily: app_fonts.Regular,
                     ),
                   ),
@@ -517,7 +429,7 @@ class AppSaleBillItem extends StatelessWidget {
               ),
             ),
 
-            // Payment Status and Amount
+            // Status + amount
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -525,7 +437,7 @@ class AppSaleBillItem extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.only(top: 6.h),
                   child: Container(
-                    width: 56.w,
+                    width:  56.w,
                     height: 18.h,
                     decoration: BoxDecoration(
                       color: paymentStatus.toLowerCase() == 'paid'
@@ -537,8 +449,8 @@ class AppSaleBillItem extends StatelessWidget {
                       child: Text(
                         paymentStatus,
                         style: TextStyle(
-                          fontSize: 11.sp,
-                          color: paymentStatus.toLowerCase() == 'paid'
+                          fontSize:   11.sp,
+                          color:      paymentStatus.toLowerCase() == 'paid'
                               ? app_colors.GreenColor
                               : app_colors.c_danger,
                           fontFamily: app_fonts.Medium,
@@ -548,75 +460,55 @@ class AppSaleBillItem extends StatelessWidget {
                   ),
                 ),
                 SizedBox(height: 4.h),
-                Padding(
-                  padding: EdgeInsets.all(0),
-                  child: Text(
-                    '${app_strings.Rs}$totalAmount',
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      color: Colors.black,
-                      fontFamily: app_fonts.Regular,
-                    ),
+                Text(
+                  '${app_strings.Rs}$totalAmount',
+                  style: TextStyle(
+                    fontSize:   11.sp,
+                    color:      Colors.black,
+                    fontFamily: app_fonts.Regular,
                   ),
                 ),
               ],
             ),
 
-            // 3-dot menu (View + Delete only - NO EDIT)
+            // 3-dot menu
             PopupMenuButton<String>(
-              color: app_colors.white,
-                onSelected: (value) {
-                  if (value == 'view') {
-                    _viewBill(context);
-                  } else if (value == 'edit') {
-                    _editBill(context);
-                  } else if (value == 'delete') {
-                    _deleteBill(context);
-                  }
-                },
-
-              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              color:      app_colors.white,
+              onSelected: (value) {
+                if (value == 'view')   _viewBill(context);
+                else if (value == 'edit')   _editBill(context);
+                else if (value == 'delete') _deleteBill(context);
+              },
+              itemBuilder: (ctx) => [
                 PopupMenuItem<String>(
                   height: 32,
-                  value: 'view',
-                  child: Row(
-                    children: [
-                      Icon(Icons.remove_red_eye, size: 18, color: app_colors.black),
-                      SizedBox(width: 10.w),
-                      Text("View Bill", style: TextStyle(fontSize: 12.sp)),
-                    ],
-                  ),
+                  value:  'view',
+                  child:  Row(children: [
+                    Icon(Icons.remove_red_eye, size: 18, color: app_colors.black),
+                    SizedBox(width: 10.w),
+                    Text("View Bill", style: TextStyle(fontSize: 12.sp)),
+                  ]),
                 ),
                 PopupMenuItem<String>(
                   height: 32,
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit, size: 18, color: app_colors.black),
-                      SizedBox(width: 10.w),
-                      Text(
-                        "Edit Bill",
-                        style: TextStyle(fontSize: 12.sp),
-                      ),
-                    ],
-                  ),
+                  value:  'edit',
+                  child:  Row(children: [
+                    Icon(Icons.edit, size: 18, color: app_colors.black),
+                    SizedBox(width: 10.w),
+                    Text("Edit Bill", style: TextStyle(fontSize: 12.sp)),
+                  ]),
                 ),
                 PopupMenuItem<String>(
                   height: 32,
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete, size: 18, color: app_colors.c_danger),
-                      SizedBox(width: 10.w),
-                      Text(
-                        "Delete Bill",
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          color: app_colors.c_danger,
-                        ),
-                      ),
-                    ],
-                  ),
+                  value:  'delete',
+                  child:  Row(children: [
+                    Icon(Icons.delete, size: 18, color: app_colors.c_danger),
+                    SizedBox(width: 10.w),
+                    Text(
+                      "Delete Bill",
+                      style: TextStyle(fontSize: 12.sp, color: app_colors.c_danger),
+                    ),
+                  ]),
                 ),
               ],
               icon: Icon(Icons.more_vert, color: app_colors.black),
@@ -636,29 +528,22 @@ Widget _buildField({
   int maxLines = 1,
 }) {
   return TextFormField(
-    controller: controller,
+    controller:   controller,
     keyboardType: keyboardType,
-    maxLines: maxLines,
+    maxLines:     maxLines,
     decoration: InputDecoration(
-      labelText: label,
-      prefixIcon: Icon(icon),
-      filled: true,
-      fillColor: Colors.white,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12.r),
-      ),
+      labelText:   label,
+      prefixIcon:  Icon(icon),
+      filled:      true,
+      fillColor:   Colors.white,
+      border:      OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide: BorderSide(
-          color: app_colors.Dborder_color,
-        ),
+        borderSide:   BorderSide(color: app_colors.Dborder_color),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide: BorderSide(
-          color: app_colors.table_header_bg,
-          width: 1.4,
-        ),
+        borderSide:   BorderSide(color: app_colors.table_header_bg, width: 1.4),
       ),
     ),
   );

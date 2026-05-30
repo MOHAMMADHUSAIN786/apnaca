@@ -21,25 +21,15 @@ class NavBar extends StatefulWidget {
 }
 
 class _NavBarState extends State<NavBar> {
-  final GlobalKey<ScaffoldState> scaffoldKey =
-  GlobalKey<ScaffoldState>();
 
-  // ✅ ADD THIS
-  final GlobalKey<HomeScreenState> homeScreenKey =
-  GlobalKey<HomeScreenState>();
-
-  final GlobalKey<SaleScreenState> saleScreenKey =
-  GlobalKey<SaleScreenState>();
-
-  final GlobalKey<ItemScreenState> itemScreenKey =
-  GlobalKey<ItemScreenState>();
-
-  final GlobalKey<PurchaseScreenState> purchaseScreenKey =
-  GlobalKey<PurchaseScreenState>();
+  final GlobalKey<ScaffoldState>       scaffoldKey       = GlobalKey<ScaffoldState>();
+  final GlobalKey<HomeScreenState>     homeScreenKey     = GlobalKey<HomeScreenState>();
+  final GlobalKey<SaleScreenState>     saleScreenKey     = GlobalKey<SaleScreenState>();
+  final GlobalKey<ItemScreenState>     itemScreenKey     = GlobalKey<ItemScreenState>();
+  final GlobalKey<PurchaseScreenState> purchaseScreenKey = GlobalKey<PurchaseScreenState>();
 
   int _selectedIndex = 0;
 
-  // ✅ CHANGE THIS
   late final List<Widget> _screens = [
     HomeScreen(key: homeScreenKey),
     SaleScreen(key: saleScreenKey),
@@ -47,30 +37,49 @@ class _NavBarState extends State<NavBar> {
     ItemScreen(key: itemScreenKey),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    // SaleScreen aur PurchaseScreen ko dashboard refresh ka callback dede
+    // (post-frame taaki keys mount ho jayein)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      saleScreenKey.currentState?.onRefreshParent     = _refreshDashboard;
+      purchaseScreenKey.currentState?.onRefreshParent = _refreshDashboard;
+    });
+  }
+
+  // ── Sirf dashboard refresh ─────────────────────────────────────
+  void _refreshDashboard() {
+    homeScreenKey.currentState?.refreshHome();
+  }
+
+  // ── Sab kuch refresh ─────────────────────────────────────────
+  void _refreshAll() {
+    itemScreenKey.currentState?.refreshItems();
+    saleScreenKey.currentState?.refreshSales();
+    purchaseScreenKey.currentState?.refreshPurchaseBills();
+    homeScreenKey.currentState?.refreshHome();
+  }
+
   String _getAppBarTitle(int index) {
     switch (index) {
-      case 0:
-        return "Dashboard";
-      case 1:
-        return "Sale";
-      case 2:
-        return "Purchase";
-      case 3:
-        return "Items";
-      default:
-        return "";
+      case 0: return "Dashboard";
+      case 1: return "Sale";
+      case 2: return "Purchase";
+      case 3: return "Items";
+      default: return "";
     }
   }
 
   void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+    setState(() => _selectedIndex = index);
 
-    // ✅ Optional auto refresh when opening item screen
-    if (index == 3) {
-      itemScreenKey.currentState?.refreshItems();
-    }
+    // Tab switch hone par dashboard always fresh rahe
+    _refreshDashboard();
+
+    if (index == 1) saleScreenKey.currentState?.refreshSales();
+    if (index == 2) purchaseScreenKey.currentState?.refreshPurchaseBills();
+    if (index == 3) itemScreenKey.currentState?.refreshItems();
   }
 
   @override
@@ -80,72 +89,52 @@ class _NavBarState extends State<NavBar> {
       child: SafeArea(
         child: Scaffold(
           backgroundColor: Colors.white,
-          key: scaffoldKey,
-
-          drawer: const AppSideBar(),
+          key:             scaffoldKey,
+          drawer:          const AppSideBar(),
 
           appBar: AppAppBar(
-            title: _getAppBarTitle(_selectedIndex),
+            title:           _getAppBarTitle(_selectedIndex),
             showSidebarIcon: true,
-            onSidebarTap: () {
-              scaffoldKey.currentState?.openDrawer();
-            },
+            onSidebarTap: () => scaffoldKey.currentState?.openDrawer(),
 
-            // ✅ UPDATED CHAT REFRESH LOGIC
             onChatTap: () async {
               final result = await Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const ChatScreen(),
-                ),
+                MaterialPageRoute(builder: (_) => const ChatScreen()),
               );
-
-              // ✅ REFRESH ITEM SCREEN
+              // AI chat se wapas aane par sab refresh karo
               if (result == true) {
-
-                // refresh items
-                itemScreenKey.currentState?.refreshItems();
-
-                // refresh sales
-                saleScreenKey.currentState?.refreshSales();
-
-                // refresh purchase
-                purchaseScreenKey.currentState?.refreshPurchaseBills();
-
-                // refresh dashboard
-                homeScreenKey.currentState?.refreshHome();
-
+                _refreshAll();
                 setState(() {});
               }
             },
           ),
 
           body: IndexedStack(
-            index: _selectedIndex,
+            index:    _selectedIndex,
             children: _screens,
           ),
 
-          floatingActionButtonLocation:
-          FloatingActionButtonLocation.centerDocked,
+          floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
 
           bottomNavigationBar: SafeArea(
             bottom: true,
             child: BottomAppBar(
-              shape: const CircularNotchedRectangle(),
+              shape:       const CircularNotchedRectangle(),
               notchMargin: 8,
-              padding: EdgeInsets.zero,
+              padding:     EdgeInsets.zero,
               child: BottomNavigationBar(
-                backgroundColor: app_colors.table_header_bg,
-                elevation: 20,
-                currentIndex: _selectedIndex,
-                onTap: _onItemTapped,
-                type: BottomNavigationBarType.fixed,
-                enableFeedback: false,
-                selectedItemColor: Colors.black,
-                unselectedItemColor: Colors.black,
+                backgroundColor:      app_colors.table_header_bg,
+                elevation:            20,
+                currentIndex:         _selectedIndex,
+                onTap:                _onItemTapped,
+                type:                 BottomNavigationBarType.fixed,
+                enableFeedback:       false,
+                selectedItemColor:    Colors.black,
+                unselectedItemColor:  Colors.black,
                 showUnselectedLabels: true,
-                selectedFontSize: 12.sp,
-                unselectedFontSize: 12.sp,
+                selectedFontSize:     12.sp,
+                unselectedFontSize:   12.sp,
                 selectedLabelStyle: const TextStyle(
                   fontWeight: FontWeight.w500,
                   fontFamily: app_fonts.Regular,
@@ -156,48 +145,24 @@ class _NavBarState extends State<NavBar> {
                 ),
                 items: [
                   BottomNavigationBarItem(
-                    icon: Image.asset(
-                      app_images.ic_home,
-                      height: 24.h,
-                    ),
-                    activeIcon: Image.asset(
-                      app_images.ic_active_home,
-                      height: 24.h,
-                    ),
-                    label: "Home",
+                    icon:       Image.asset(app_images.ic_home,           height: 24.h),
+                    activeIcon: Image.asset(app_images.ic_active_home,    height: 24.h),
+                    label:      "Home",
                   ),
                   BottomNavigationBarItem(
-                    icon: Image.asset(
-                      app_images.ic_sale,
-                      height: 24.h,
-                    ),
-                    activeIcon: Image.asset(
-                      app_images.ic_active_sale,
-                      height: 24.h,
-                    ),
-                    label: "Sale",
+                    icon:       Image.asset(app_images.ic_sale,           height: 24.h),
+                    activeIcon: Image.asset(app_images.ic_active_sale,    height: 24.h),
+                    label:      "Sale",
                   ),
                   BottomNavigationBarItem(
-                    icon: Image.asset(
-                      app_images.ic_purchase,
-                      height: 24.h,
-                    ),
-                    activeIcon: Image.asset(
-                      app_images.ic_active_purchase,
-                      height: 24.h,
-                    ),
-                    label: "Purchase",
+                    icon:       Image.asset(app_images.ic_purchase,       height: 24.h),
+                    activeIcon: Image.asset(app_images.ic_active_purchase, height: 24.h),
+                    label:      "Purchase",
                   ),
                   BottomNavigationBarItem(
-                    icon: Image.asset(
-                      app_images.ic_item,
-                      height: 24.h,
-                    ),
-                    activeIcon: Image.asset(
-                      app_images.ic_active_item,
-                      height: 24.h,
-                    ),
-                    label: "Items",
+                    icon:       Image.asset(app_images.ic_item,           height: 24.h),
+                    activeIcon: Image.asset(app_images.ic_active_item,    height: 24.h),
+                    label:      "Items",
                   ),
                 ],
               ),

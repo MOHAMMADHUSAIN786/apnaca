@@ -45,6 +45,29 @@ class ActionParser {
 
   static ParsedAction? _fuzzyFallback(String raw) {
     final l = raw.toLowerCase();
+
+    // ── Bill status updates — check BEFORE generic bill/unpaid checks ──
+    // "paid karna hai" + "sale bill" → ask for bill number
+    if (_has(l, ['paid karna', 'paid mark', 'paid kar do', 'paid karo']) &&
+        _has(l, ['sale', 'invoice', 'bill'])) {
+      return ParsedAction(
+        type: AiActionType.ask,
+        data: {'field': 'bill_number'},
+        reply: 'Konsa bill paid karna hai? Bill number batao (jaise: SB-2026-0001)',
+        askField: 'bill_number',
+      );
+    }
+    if (_has(l, ['paid karna', 'paid mark', 'paid kar do', 'paid karo']) &&
+        _has(l, ['purchase'])) {
+      return ParsedAction(
+        type: AiActionType.ask,
+        data: {'field': 'bill_number'},
+        reply: 'Konsa purchase bill paid karna hai? Bill number batao (jaise: PB-2026-0001)',
+        askField: 'bill_number',
+      );
+    }
+
+    // Sale bill creation
     if (_has(l, ['sale bill', 'bil banao', 'bill bana', 'invoice', 'bill banao', 'bill create'])) {
       return ParsedAction(type: AiActionType.createSaleBill, data: {}, reply: 'Kis customer ka bill banana hai?');
     }
@@ -72,7 +95,8 @@ class ActionParser {
     if (_has(l, ['low stock', 'kam stock', 'khatam'])) {
       return ParsedAction(type: AiActionType.getAnalytics, data: {'period': 'low_stock'}, reply: 'Low stock items:');
     }
-    if (_has(l, ['unpaid', 'udhaar', 'baaki'])) {
+    // "unpaid dikhao" = analytics; "unpaid paid karna" = ask for bill number
+    if (_has(l, ['unpaid', 'udhaar', 'baaki']) && !_has(l, ['paid karna', 'paid karo', 'paid mark'])) {
       return ParsedAction(type: AiActionType.getAnalytics, data: {'period': 'unpaid'}, reply: 'Unpaid bills:');
     }
     if (_has(l, ['top item', 'best selling', 'jyada bika'])) {

@@ -4,7 +4,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../features/auth/presentation/pages/auth_screen.dart';
+import '../../../features/contact_us/contactus_screen.dart';
 import '../../../features/customer/presentation/pages/customer_screen.dart';
+import '../../../features/feedback/feedback_screen.dart';
 import '../../../features/profile/presentation/pages/profile_screen.dart';
 import '../../../features/setting/presentation/pages/setting_screen.dart';
 import '../../../features/subscription/presentation/pages/subscription_screen.dart';
@@ -319,6 +321,30 @@ class _AppSideBarState extends State<AppSideBar> {
                     },
                   ),
 
+                  // Contact Us
+                  _buildTile(
+                    icon: Icons.contact_support_outlined,
+                    label: "Contact Us",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ContactUsScreen()),
+                      );
+                    },
+                  ),
+
+// Feedback
+                  _buildTile(
+                    icon: Icons.star_outline,
+                    label: "Feedback",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                      );
+                    },
+                  ),
+
                   // Logout Option (Red Color)
                   _buildLogoutTile(context),
                 ],
@@ -585,7 +611,7 @@ class _AppSideBarState extends State<AppSideBar> {
                 '4. Your Rights\n'
                 '   You have the right to access, modify, or delete your data '
                 'at any time.\n\n'
-                'For any questions, contact us at godadmohammadhusain@gmail.com',
+                'For any questions, contact us at apnaca786@gmail.com',
             style: TextStyle(fontSize: 12.sp),
           ),
         ),
@@ -624,7 +650,7 @@ class _AppSideBarState extends State<AppSideBar> {
                 '6. Termination\n'
                 '   We may terminate or suspend access to our service immediately '
                 'for violations of these terms.\n\n'
-                'For questions, contact: godadmohammadhusain@gmail.com',
+                'For questions, contact: apnaca786@gmail.com',
             style: TextStyle(fontSize: 12.sp),
           ),
         ),

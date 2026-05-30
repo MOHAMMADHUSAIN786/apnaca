@@ -9,18 +9,17 @@ class PurchaseScreen extends StatefulWidget {
   const PurchaseScreen({super.key});
 
   @override
-  State<PurchaseScreen> createState() =>
-      PurchaseScreenState();
+  State<PurchaseScreen> createState() => PurchaseScreenState();
 }
 
-class PurchaseScreenState
-    extends State<PurchaseScreen> {
+class PurchaseScreenState extends State<PurchaseScreen> {
 
   List<Map<String, dynamic>> _bills = [];
-
   bool _isLoading = true;
-
   String? _error;
+
+  // Callback — NavBar inhe set karega taaki dashboard bhi refresh ho
+  VoidCallback? onRefreshParent;
 
   @override
   void initState() {
@@ -29,105 +28,64 @@ class PurchaseScreenState
   }
 
   Future<void> _fetchBills() async {
-
     if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    setState(() { _isLoading = true; _error = null; });
 
     try {
-
-      final bills = await AppDatabase.instance
-          .getAllPurchaseBills();
-
+      final bills = await AppDatabase.instance.getAllPurchaseBills();
       if (!mounted) return;
-
-      setState(() {
-        _bills = bills;
-        _isLoading = false;
-      });
-
+      setState(() { _bills = bills; _isLoading = false; });
     } catch (e) {
-
       if (!mounted) return;
-
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
+      setState(() { _error = e.toString(); _isLoading = false; });
     }
   }
 
-  // AI CHAT refresh support
-  void refreshPurchaseBills() {
+  // ── Called by NavBar (AI chat return) + internal bill edit/delete ──
+  void refreshPurchaseBills() => _fetchBills();
+
+  // ── Called after edit/delete to also refresh dashboard ────────────
+  void _onBillChanged() {
     _fetchBills();
+    onRefreshParent?.call(); // ← dashboard ko bhi batao
   }
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       backgroundColor: Colors.white,
-
       body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
-
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
-
       return Center(
         child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
-
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
-            Text("Error : $_error"),
-
+            Text("Error: $_error"),
             SizedBox(height: 16.h),
-
-            ElevatedButton(
-              onPressed: _fetchBills,
-              child: const Text("Retry"),
-            ),
+            ElevatedButton(onPressed: _fetchBills, child: const Text("Retry")),
           ],
         ),
       );
     }
 
     if (_bills.isEmpty) {
-
       return Center(
         child: Column(
-          mainAxisAlignment:
-          MainAxisAlignment.center,
-
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
-            Icon(
-              Icons.shopping_bag_outlined,
-              size: 80,
-              color: Colors.grey,
-            ),
-
+            Icon(Icons.shopping_bag_outlined, size: 80, color: Colors.grey),
             SizedBox(height: 16.h),
-
             Text(
               'No purchase bills found',
-              style: TextStyle(
-                fontSize: 16.sp,
-                color: Colors.grey,
-              ),
+              style: TextStyle(fontSize: 16.sp, color: Colors.grey),
             ),
           ],
         ),
@@ -136,38 +94,19 @@ class PurchaseScreenState
 
     return RefreshIndicator(
       onRefresh: _fetchBills,
-
       child: ListView.builder(
-        padding: EdgeInsets.only(bottom: 80.h),
-
-        itemCount: _bills.length,
-
+        padding:     EdgeInsets.only(bottom: 80.h),
+        itemCount:   _bills.length,
         itemBuilder: (context, index) {
-
           final bill = _bills[index];
-
           return AppPurchaseBillItem(
-            billId: bill['id'],
-
-            billNumber:
-            bill['bill_number'] ?? '',
-
-            supplierName:
-            bill['supplier_name'] ??
-                'Unknown Supplier',
-
-            billDate:
-            bill['bill_date'] ?? '',
-
-            totalAmount:
-            (bill['total_amount'] ?? 0)
-                .toString(),
-
-            paymentStatus:
-            bill['payment_status'] ??
-                'unpaid',
-
-            onBillUpdated: _fetchBills,
+            billId:        bill['id'],
+            billNumber:    bill['bill_number'] ?? '',
+            supplierName:  bill['supplier_name'] ?? 'Unknown Supplier',
+            billDate:      bill['bill_date'] ?? '',
+            totalAmount:   (bill['total_amount'] ?? 0).toString(),
+            paymentStatus: bill['payment_status'] ?? 'unpaid',
+            onBillUpdated: _onBillChanged, // ← edit/delete dono ke liye
           );
         },
       ),

@@ -22,16 +22,24 @@ class SaleScreenState extends State<SaleScreen> {
 
   late SaleBloc _saleBloc;
 
+  // Callback — NavBar set karega taaki dashboard bhi refresh ho
+  VoidCallback? onRefreshParent;
+
   @override
   void initState() {
     super.initState();
-
-    _saleBloc = SaleBloc(AppDatabase.instance)
-      ..add(FetchSaleBills());
+    _saleBloc = SaleBloc(AppDatabase.instance)..add(FetchSaleBills());
   }
 
   void refreshSales() {
     _saleBloc.add(FetchSaleBills());
+  }
+
+  // ── Called after bill edit/delete — sale list + dashboard refresh ──
+  void _onBillChanged() {
+    refreshSales();
+    onRefreshParent?.call(); // ← dashboard ko bhi batao
+    if (mounted) setState(() {});
   }
 
   @override
@@ -60,36 +68,22 @@ class SaleScreenState extends State<SaleScreen> {
             builder: (context, state) {
 
               if (state is SaleLoading) {
-                return const Center(
-                  child: CircularProgressIndicator(),
-                );
+                return const Center(child: CircularProgressIndicator());
               }
 
-              else if (state is SaleLoaded) {
-
+              if (state is SaleLoaded) {
                 final bills = state.bills;
 
                 if (bills.isEmpty) {
-
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-
-                        Icon(
-                          Icons.receipt,
-                          size: 80,
-                          color: Colors.grey,
-                        ),
-
+                        const Icon(Icons.receipt, size: 80, color: Colors.grey),
                         SizedBox(height: 16.h),
-
                         Text(
                           'No sale bills found',
-                          style: TextStyle(
-                            fontSize: 16.sp,
-                            color: Colors.grey,
-                          ),
+                          style: TextStyle(fontSize: 16.sp, color: Colors.grey),
                         ),
                       ],
                     ),
@@ -97,41 +91,25 @@ class SaleScreenState extends State<SaleScreen> {
                 }
 
                 return ListView.builder(
-                  padding: EdgeInsets.only(bottom: 80.h),
-                  itemCount: bills.length,
-
+                  padding:     EdgeInsets.only(bottom: 80.h),
+                  itemCount:   bills.length,
                   itemBuilder: (context, index) {
-
                     final bill = bills[index];
-
                     return AppSaleBillItem(
-                      billId: bill.id,
-                      billNumber: bill.billNumber,
-                      partyName: bill.customerName,
-                      billDate: bill.billDate,
-                      totalAmount:
-                      bill.totalAmount.toStringAsFixed(2),
+                      billId:        bill.id,
+                      billNumber:    bill.billNumber,
+                      partyName:     bill.customerName,
+                      billDate:      bill.billDate,
+                      totalAmount:   bill.totalAmount.toStringAsFixed(2),
                       paymentStatus: bill.paymentStatus,
-
-                      onBillUpdated: () {
-
-                        refreshSales();
-
-                        // rebuild parent screens too
-                        if (mounted) {
-                          setState(() {});
-                        }
-                      },
+                      onBillUpdated: _onBillChanged, // ← edit/delete dono ke liye
                     );
                   },
                 );
               }
 
-              else if (state is SaleError) {
-
-                return Center(
-                  child: Text('Error: ${state.message}'),
-                );
+              if (state is SaleError) {
+                return Center(child: Text('Error: ${state.message}'));
               }
 
               return const SizedBox.shrink();
