@@ -95,14 +95,12 @@ class _SubscriptionScreenState
     final options = {
       'key': apiKey,
       'amount': amountPaise,
-      'name': 'BillNex',
+      'name': 'ApnaCA',
       'description': plan == SubscriptionPlan.gold
           ? 'Gold Plan - 12 Months'
           : 'Silver Plan - 6 Months',
       'prefill': {
-        'contact': '9876543210',
-        'email': 'test@example.com',
-      },
+        },
       'theme': {
         'color': '#2490EF',
       },

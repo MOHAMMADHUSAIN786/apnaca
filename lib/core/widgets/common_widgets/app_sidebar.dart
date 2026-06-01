@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import '../../../database/app_database.dart';
 import '../../../features/auth/presentation/pages/auth_screen.dart';
 import '../../../features/contact_us/contactus_screen.dart';
 import '../../../features/customer/presentation/pages/customer_screen.dart';
@@ -404,19 +405,16 @@ class _AppSideBarState extends State<AppSideBar> {
     // Show confirmation dialog
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Logout'),
         content: const Text('Are you sure you want to logout?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AuthScreen()),
-            );},
+            onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Logout'),
           ),
@@ -424,40 +422,58 @@ class _AppSideBarState extends State<AppSideBar> {
       ),
     );
 
-    if (confirm == true) {
-      // Show loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 20),
-              Text('Logging out...'),
-            ],
-          ),
-        ),
-      );
+    if (confirm != true) return;
 
-      try {
-        // Sign out from Firebase
-        await FirebaseAuth.instance.signOut();
+    // Show loading
+    if (!mounted) return;
 
-        // Close loading dialog
-        if (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
+    // Loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 16),
+          Expanded(child: Text('Saving data & logging out...')),
+        ]),
+      ),
+    );
 
-        // Navigate to login screen
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-      } catch (e) {
-        // Close loading dialog
-        if (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
+    try {
+      // ── 1. BACKUP — logout se pehle guaranteed upload ─────────────
+      final backupOk = await FirebaseSyncService.uploadBeforeLogout();
+      if (!backupOk) {
+        print('⚠️ Backup could not be uploaded — proceeding with logout anyway');
+      }
 
-        // Show error
+      // ── 2. WIPE local SQLite ──────────────────────────────────────
+      await AppDatabase.instance.clearAllData();
+
+      // ── 3. Clear user session ─────────────────────────────────────
+      FirebaseSyncService.setCurrentUser('');
+
+      // ── 4. Firebase sign out ──────────────────────────────────────
+      await FirebaseAuth.instance.signOut();
+
+      // Close loading dialog
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+
+      // Navigate to auth screen — remove ALL previous routes
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+              (route) => false,
+        );
+      }
+    } catch (e) {
+      // Close loading dialog
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Logout failed: $e'),

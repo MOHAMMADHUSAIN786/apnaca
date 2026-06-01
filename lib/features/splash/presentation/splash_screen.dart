@@ -8,8 +8,11 @@ import '../../../../core/constants/app_images.dart';
 import '../../../../core/constants/app_status_bar.dart';
 import '../../../../core/widgets/common_widgets/app_loader.dart';
 import '../../../core/services/sync_service.dart';
+import '../../admin/presentation/pages/admin_screen.dart';
 import '../../auth/presentation/pages/auth_screen.dart';
 import '../../other/nav_bar.dart';
+
+const String _adminEmail = 'admin@gmail.com';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -29,7 +32,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _checkLogin() async {
     await Future.delayed(const Duration(seconds: 2));
 
-    User? user = FirebaseAuth.instance.currentUser;
+    final user = FirebaseAuth.instance.currentUser;
 
     if (!mounted) return;
 
@@ -37,9 +40,19 @@ class _SplashScreenState extends State<SplashScreen> {
       // Set user in sync service
       FirebaseSyncService.setCurrentUser(user.uid);
 
-      // Try to sync data on app start
+      // ✅ Admin check — same as login screen
+      if (user.email?.toLowerCase() == _adminEmail) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const AdminScreen()),
+        );
+        return;
+      }
+
+      // Normal user — sync then go to NavBar
       await FirebaseSyncService.downloadDatabase();
 
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const NavBar()),

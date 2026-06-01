@@ -85,6 +85,12 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           if (currentUser != null) {
 
             // ─────────────────────────────
+            // SWITCH LOCAL DB TO THIS USER
+            // (prevents old user's data leaking to new user)
+            // ─────────────────────────────
+            await AppDatabase.switchUser(currentUser.uid);
+
+            // ─────────────────────────────
             // FIRESTORE USER FETCH
             // ─────────────────────────────
 

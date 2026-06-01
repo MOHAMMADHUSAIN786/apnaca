@@ -9,6 +9,7 @@ import '../features/supplier/model/supplier_model.dart';
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._internal();
   static Database? _db;
+  static String? _currentUid; // ← track which user's DB is open
   AppDatabase._internal();
 
   Future<Database> get database async {
@@ -16,8 +17,67 @@ class AppDatabase {
     return _db!;
   }
 
+  // ════════════════════════════════════════════════════════
+  //  USER SWITCH — call on login with new UID
+  //  Closes old DB, opens fresh DB for new user
+  // ════════════════════════════════════════════════════════
+  static Future<void> switchUser(String uid) async {
+    if (_currentUid == uid && _db != null) return; // same user, already open
+
+    // Close existing connection
+    if (_db != null) {
+      await _db!.close();
+      _db = null;
+    }
+    _currentUid = uid;
+    // Re-open will happen lazily on next `database` call
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  CLEAR ALL LOCAL DATA — call on logout
+  //  Wipes every table so next user starts fresh
+  // ════════════════════════════════════════════════════════
+  Future<void> clearAllData() async {
+    try {
+      final db = await database;
+      final tables = [
+        'users',
+        'items',
+        'customers',
+        'suppliers',
+        'sale_bills',
+        'sale_bill_items',
+        'purchase_bills',
+        'purchase_bill_items',
+        'transactions',
+        'warehouses',
+        'warehouse_items',
+      ];
+      await db.transaction((txn) async {
+        for (final table in tables) {
+          try {
+            await txn.execute('DELETE FROM $table');
+          } catch (_) {
+            // Table may not exist in older schema — skip silently
+          }
+        }
+      });
+    } catch (e) {
+      // If even this fails, close & nullify — fresh open next time
+    } finally {
+      if (_db != null) {
+        await _db!.close();
+        _db = null;
+      }
+      _currentUid = null;
+    }
+  }
+
   Future<Database> _initDb() async {
-    final path = join(await getDatabasesPath(), 'billnex.db');
+    // Per-user DB file: billnex_<uid>.db  (fallback: billnex.db for safety)
+    final uid      = _currentUid ?? 'default';
+    final dbName   = 'billnex_$uid.db';
+    final path     = join(await getDatabasesPath(), dbName);
     return await openDatabase(
         path,
         version: 8, // bumped to 8 to add suppliers + purchase_bills

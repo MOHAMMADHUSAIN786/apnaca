@@ -2,6 +2,8 @@
 //
 // REQUIRED: pubspec.yaml mein ye add karo (agar nahi hai):
 //   cloud_firestore, firebase_auth, flutter_screenutil
+//admin@gmail.com
+//admin@786
 //
 // NOTE: Account delete ke liye Firebase Admin SDK chahiye (server side).
 //       Firestore doc delete hoga client se, Auth user delete ke liye
@@ -10,6 +12,7 @@
 //       force kiya jayega (practical approach for client-only app).
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -265,7 +268,10 @@ class _AdminScreenState extends State<AdminScreen> {
   // ════════════════════════════════════════════════════════════════
 
   Future<void> _deleteAccount(AdminUserData user) async {
-    // Double confirm — destructive action
+    print("CURRENT USER UID: ${FirebaseAuth.instance.currentUser?.uid}");
+    print("CURRENT USER EMAIL: ${FirebaseAuth.instance.currentUser?.email}");
+    print("TOKEN: ${await FirebaseAuth.instance.currentUser?.getIdToken()}");
+
     final step1 = await _showConfirmDialog(
       title: '⚠️ Account Delete',
       content:
@@ -274,97 +280,66 @@ class _AdminScreenState extends State<AdminScreen> {
       confirmLabel: 'Haan, Delete Karo',
       confirmColor: app_colors.c_danger,
     );
+
     if (!step1) return;
 
     final step2 = await _showConfirmDialog(
       title: 'Pakka Sure Ho?',
-      content: 'User ka saara data —\n'
+      content:
+      'User ka saara data permanently delete ho jayega.\n\n'
+          '• Authentication\n'
           '• Profile\n'
           '• Subscription\n'
-          '• Contact queries\n'
-          '• Feedback\n\n'
-          'sab hamesha ke liye delete ho jayega.',
-      confirmLabel: 'Haan, Bilkul Delete Karo',
+          '• AI Chat\n'
+          '• Queries\n'
+          '• Feedback\n'
+          '• Storage Files',
+      confirmLabel: 'Final Delete',
       confirmColor: app_colors.c_danger,
     );
+
     if (!step2) return;
 
-    // Loader show karo
-    bool loaderVisible = true;
-    _showLoader('Account delete ho raha hai…');
-
-    String? errorMsg;
+    _showLoader('Account delete ho raha hai...');
 
     try {
-      final fs = FirebaseFirestore.instance;
-      final uid = user.uid;
 
-      // ── 1. Subscription delete ────────────────────────────────
-      try {
-        await fs.collection('subscriptions').doc(uid).delete();
-      } catch (e) {
-        debugPrint('Subscription delete skip (may not exist): $e');
-      }
+      final callable = FirebaseFunctions.instanceFor(
+        region: 'us-central1',
+      ).httpsCallable('deleteUser');
 
-      // ── 2. Contact queries delete (uid field se match) ────────
-      try {
-        final qSnap = await fs
-            .collection('contact_queries')
-            .where('uid', isEqualTo: uid)
-            .get();
-        final batch1 = fs.batch();
-        for (final d in qSnap.docs) {
-          batch1.delete(d.reference);
-        }
-        if (qSnap.docs.isNotEmpty) await batch1.commit();
-      } catch (e) {
-        debugPrint('Contact queries delete skip: $e');
-      }
+      final result = await callable.call({
+        'uid': user.uid,
+      });
 
-      // ── 3. Feedbacks delete (uid field se match) ──────────────
-      try {
-        final fSnap = await fs
-            .collection('feedbacks')
-            .where('uid', isEqualTo: uid)
-            .get();
-        final batch2 = fs.batch();
-        for (final d in fSnap.docs) {
-          batch2.delete(d.reference);
-        }
-        if (fSnap.docs.isNotEmpty) await batch2.commit();
-      } catch (e) {
-        debugPrint('Feedbacks delete skip: $e');
-      }
+      debugPrint("Delete Result: ${result.data}");
 
-      // ── 4. User doc delete (LAST mein — ye main record hai) ───
-      await fs.collection('users').doc(uid).delete();
-
-      // ── 5. Local state update ─────────────────────────────────
       if (mounted) {
+
+        Navigator.of(context, rootNavigator: true).pop();
+
         setState(() {
-          _users.removeWhere((u) => u.uid == uid);
+          _users.removeWhere((u) => u.uid == user.uid);
         });
+
+        _showSnack(
+          '${user.fullName} ka account permanently delete ho gaya ✅',
+          color: app_colors.GreenColor,
+        );
+
+        _fetchAllData();
       }
+
     } catch (e) {
-      errorMsg = e.toString();
-      debugPrint('DELETE ERROR: $e');
-    }
 
-    // Loader band karo
-    if (mounted && loaderVisible) {
-      loaderVisible = false;
-      Navigator.of(context, rootNavigator: true).pop();
-    }
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
 
-    // Result dikhao
-    if (!mounted) return;
-    if (errorMsg != null) {
-      _showSnack('Delete failed: $errorMsg', color: app_colors.c_danger);
-    } else {
-      _showSnack(
-        '${user.fullName} ka account delete ho gaya 🗑️',
-        color: app_colors.c_danger,
-      );
+        _showSnack(
+          'Delete failed: $e',
+          color: app_colors.c_danger,
+        );
+      }
     }
   }
 

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../../database/app_database.dart';
@@ -12,51 +11,77 @@ class FirebaseSyncService {
   static String? _currentUserId;
   static Timer? _debounceTimer;
 
-  // Set current user ID (call after login)
+  // ─────────────────────────────────────────────────────────
+  //  SET USER
+  // ─────────────────────────────────────────────────────────
   static void setCurrentUser(String userId) {
-    _currentUserId = userId;
-    print('👤 Current user set: $_currentUserId');
+    _currentUserId = userId.isEmpty ? null : userId;
   }
 
-  // Get current user ID
   static String get _userId {
-    if (_currentUserId == null) {
-      throw Exception('User not logged in. Call setCurrentUser() first.');
+    if (_currentUserId == null || _currentUserId!.isEmpty) {
+      throw Exception('User not logged in.');
     }
     return _currentUserId!;
   }
 
-  // Get database file path
-  static Future<String> get _dbPath async {
-    final dbPath = await getDatabasesPath();
-    return path.join(dbPath, 'billnex.db');
+  // ─────────────────────────────────────────────────────────
+  //  DB PATH — user-specific, matches AppDatabase
+  // ─────────────────────────────────────────────────────────
+  static Future<String> _getDbPath(String uid) async {
+    final dbDir = await getDatabasesPath();
+    return path.join(dbDir, 'billnex_$uid.db');
   }
 
-  // Upload database to Firebase Storage
+  // ─────────────────────────────────────────────────────────
+  //  UPLOAD — safe version with WAL flush + file existence check
+  // ─────────────────────────────────────────────────────────
   static Future<bool> uploadDatabase() async {
-    if (_currentUserId == null) {
-      print('⚠️ Cannot upload: No user logged in');
-      return false;
-    }
+    if (_currentUserId == null || _currentUserId!.isEmpty) return false;
+
+    final uid = _currentUserId!;
 
     try {
-      final dbFile = File(await _dbPath);
+      // 1. Flush WAL — ensure all pending writes are in the main DB file
+      try {
+        final db = await AppDatabase.instance.database;
+        await db.execute('PRAGMA wal_checkpoint(FULL)');
+      } catch (_) {
+        // DB may already be closing — continue anyway, file still readable
+      }
+
+      // 2. Read the actual file from disk
+      final localPath = await _getDbPath(uid);
+      final dbFile    = File(localPath);
+
       if (!await dbFile.exists()) {
-        print('❌ Database file not found');
+        print('⚠️ No local DB file found for user $uid — nothing to backup');
         return false;
       }
 
       final fileSize = await dbFile.length();
-      final fileName = 'user_${_userId}.db';
-      final ref = _storage.ref().child('database_backups/$fileName');
+      if (fileSize == 0) {
+        print('⚠️ DB file is empty — skipping backup');
+        return false;
+      }
 
-      print('📤 Uploading database...');
-      print('   User: $_userId');
-      print('   File: $fileName');
-      print('   Size: ${(fileSize / 1024).toStringAsFixed(2)} KB');
+      // 3. Upload to Firebase Storage
+      final ref = _storage
+          .ref()
+          .child('database_backups/user_$uid.db');
 
-      await ref.putFile(dbFile);
-      print('✅ Database uploaded successfully: $fileName');
+      await ref.putFile(
+        dbFile,
+        SettableMetadata(
+          customMetadata: {
+            'uid':         uid,
+            'uploaded_at': DateTime.now().toIso8601String(),
+            'size_kb':     (fileSize / 1024).toStringAsFixed(2),
+          },
+        ),
+      );
+
+      print('✅ Backup uploaded: user_$uid.db (${(fileSize/1024).toStringAsFixed(1)} KB)');
       return true;
     } catch (e) {
       print('❌ Upload failed: $e');
@@ -64,57 +89,68 @@ class FirebaseSyncService {
     }
   }
 
-  // Debounced upload (for auto-sync)
+  // ─────────────────────────────────────────────────────────
+  //  LOGOUT BACKUP — guaranteed safe sequence
+  //  Call this ONLY during logout, before clearAllData()
+  // ─────────────────────────────────────────────────────────
+  static Future<bool> uploadBeforeLogout() async {
+    if (_currentUserId == null || _currentUserId!.isEmpty) return false;
+
+    // Cancel any pending debounce timer — we're doing a full upload now
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+
+    return await uploadDatabase();
+  }
+
+  // ─────────────────────────────────────────────────────────
+  //  DEBOUNCED AUTO-SYNC (2 sec after any DB write)
+  // ─────────────────────────────────────────────────────────
   static void debouncedUpload() {
+    if (_currentUserId == null || _currentUserId!.isEmpty) return;
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(seconds: 2), () {
-      print('🔄 Auto-sync triggered');
       uploadDatabase();
     });
   }
 
-  // Download database from Firebase Storage
+  // ─────────────────────────────────────────────────────────
+  //  DOWNLOAD — restore from Firebase Storage
+  // ─────────────────────────────────────────────────────────
   static Future<bool> downloadDatabase() async {
-    if (_currentUserId == null) {
-      print('⚠️ Cannot download: No user logged in');
-      return false;
-    }
+    if (_currentUserId == null || _currentUserId!.isEmpty) return false;
+
+    final uid = _currentUserId!;
 
     try {
-      final fileName = 'user_${_userId}.db';
-      final ref = _storage.ref().child('database_backups/$fileName');
+      final ref = _storage
+          .ref()
+          .child('database_backups/user_$uid.db');
 
-      print('📥 Checking for existing backup...');
-      print('   User: $_userId');
-      print('   File: $fileName');
-
-      // Check if file exists
+      // Check if backup exists
       try {
         await ref.getMetadata();
-      } catch (e) {
-        print('ℹ️ No backup found for user: $_userId');
+      } catch (_) {
+        print('ℹ️ No cloud backup found for user $uid');
         return false;
       }
 
-      print('📥 Downloading database...');
-
-      // Download file
+      // Download bytes
       final bytes = await ref.getData();
-      if (bytes == null) return false;
+      if (bytes == null || bytes.isEmpty) return false;
 
-      print('📦 Downloaded ${bytes.length} bytes');
-
-      // Close current database connection
+      // Close DB connection before overwriting file
       await AppDatabase.instance.close();
 
-      // Replace local database
-      final dbFile = File(await _dbPath);
-      await dbFile.writeAsBytes(bytes);
+      // Write to user-specific local path
+      final localPath = await _getDbPath(uid);
+      final dbFile    = File(localPath);
+      await dbFile.writeAsBytes(bytes, flush: true);
 
-      // Reopen database
+      // Re-open (AppDatabase._currentUid is already set via switchUser)
       await AppDatabase.instance.database;
 
-      print('✅ Database restored successfully: $fileName');
+      print('✅ Database restored for user $uid (${(bytes.length/1024).toStringAsFixed(1)} KB)');
       return true;
     } catch (e) {
       print('❌ Download failed: $e');
@@ -122,35 +158,34 @@ class FirebaseSyncService {
     }
   }
 
-  // Get backup info
+  // ─────────────────────────────────────────────────────────
+  //  BACKUP INFO
+  // ─────────────────────────────────────────────────────────
   static Future<Map<String, dynamic>?> getBackupInfo() async {
-    if (_currentUserId == null) return null;
-
+    if (_currentUserId == null || _currentUserId!.isEmpty) return null;
     try {
-      final fileName = 'user_${_userId}.db';
-      final ref = _storage.ref().child('database_backups/$fileName');
+      final ref      = _storage.ref().child('database_backups/user_$_userId.db');
       final metadata = await ref.getMetadata();
-
       return {
-        'fileName': fileName,
-        'size': metadata.size,
+        'fileName':    'user_$_userId.db',
+        'size':        metadata.size ?? 0,
         'lastModified': metadata.updated,
       };
-    } catch (e) {
-      print('❌ Get info failed: $e');
+    } catch (_) {
       return null;
     }
   }
 
-  // Delete remote backup
+  // ─────────────────────────────────────────────────────────
+  //  DELETE REMOTE BACKUP
+  // ─────────────────────────────────────────────────────────
   static Future<bool> deleteRemoteBackup() async {
-    if (_currentUserId == null) return false;
-
+    if (_currentUserId == null || _currentUserId!.isEmpty) return false;
     try {
-      final fileName = 'user_${_userId}.db';
-      final ref = _storage.ref().child('database_backups/$fileName');
-      await ref.delete();
-      print('✅ Remote backup deleted: $fileName');
+      await _storage
+          .ref()
+          .child('database_backups/user_$_userId.db')
+          .delete();
       return true;
     } catch (e) {
       print('❌ Delete failed: $e');
