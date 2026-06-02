@@ -1,5 +1,5 @@
 class app_images {
-  static const String app_logo = "assets/images/ic_logo.png";
+  static const String app_logo = "assets/images/ic_logo.svg";
 
   //splash images
 

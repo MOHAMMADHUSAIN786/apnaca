@@ -31,6 +31,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _logoLoading = false;
   bool _signatureLoading = false;
 
+  // ─────────────────────────────────────────────
+  // SIZE LIMIT CONSTANT
+  // ─────────────────────────────────────────────
+  static const int _maxImageSizeBytes = 1 * 1024 * 1024; // 1 MB
+
   @override
   void initState() {
     super.initState();
@@ -194,6 +199,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────
+  // PICK & UPLOAD — with 1 MB validation
+  // ─────────────────────────────────────────────
+
   Future<void> _pickAndUploadImage(ImageSource source, String type) async {
     try {
       final picker = ImagePicker();
@@ -201,12 +210,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await picker.pickImage(source: source, imageQuality: 70);
       if (pickedFile == null) return;
 
+      // ── SIZE VALIDATION ───────────────────────────────────────────────────
+      final file = File(pickedFile.path);
+      final fileSizeBytes = await file.length();
+
+      if (fileSizeBytes > _maxImageSizeBytes) {
+        final fileSizeMB = (fileSizeBytes / (1024 * 1024)).toStringAsFixed(2);
+        if (mounted) {
+          _showSizeErrorDialog(
+            type: type,
+            actualSizeMB: fileSizeMB,
+          );
+        }
+        return; // abort — do NOT upload
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       if (type == 'profile') setState(() { _isSaving = true; });
       if (type == 'logo') setState(() { _logoLoading = true; });
       if (type == 'signature') setState(() { _signatureLoading = true; });
 
       final user = FirebaseAuth.instance.currentUser!;
-      final file = File(pickedFile.path);
 
       String storagePath;
       if (type == 'profile') {
@@ -246,6 +270,115 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
       }
     }
+  }
+
+  // ─────────────────────────────────────────────
+  // SIZE ERROR DIALOG
+  // ─────────────────────────────────────────────
+
+  void _showSizeErrorDialog({required String type, required String actualSizeMB}) {
+    final label = type == 'profile'
+        ? 'Profile Photo'
+        : type == 'logo'
+        ? 'Company Logo'
+        : 'Signature';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20.r)),
+        backgroundColor: Colors.white,
+        icon: Container(
+          padding: EdgeInsets.all(14.w),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF3F3),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.image_not_supported_rounded,
+            color: app_colors.c_danger,
+            size: 32.sp,
+          ),
+        ),
+        title: Text(
+          'Image Too Large',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 17.sp,
+            fontWeight: FontWeight.w700,
+            color: app_colors.black,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$label ki size $actualSizeMB MB hai.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13.sp, color: Colors.grey[700]),
+            ),
+            SizedBox(height: 8.h),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3F3),
+                borderRadius: BorderRadius.circular(12.r),
+                border: Border.all(color: app_colors.c_danger.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      color: app_colors.c_danger, size: 16.sp),
+                  SizedBox(width: 8.w),
+                  Text(
+                    'Maximum allowed size: 1 MB',
+                    style: TextStyle(
+                      fontSize: 12.sp,
+                      color: app_colors.c_danger,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: 10.h),
+            Text(
+              'Kripaya chhoti image choose karein ya image compress karke dobara try karein.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.sp, color: Colors.grey[500]),
+            ),
+          ],
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 8.h),
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(ctx),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: app_colors.c_primary,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12.r)),
+                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                ),
+                child: Text(
+                  'Theek Hai',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _removeProfileImage() async {

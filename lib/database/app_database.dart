@@ -5,6 +5,7 @@ import '../core/services/sync_service.dart';
 import '../features/customer/model/customer_model.dart';
 import '../features/item/model/item_model.dart';
 import '../features/supplier/model/supplier_model.dart';
+import '../features/subscription/service/subscription_service.dart';
 
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._internal();
@@ -318,6 +319,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
   Future<int> insertItem(ItemModel item) async {
     final result = await (await database).insert('items', item.toMap());
     FirebaseSyncService.debouncedUpload();
+    // Track subscription usage (fire-and-forget — never block DB op)
+    SubscriptionService.instance.incrementItemCount().catchError((_) {});
     return result;
   }
 
@@ -354,6 +357,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
     final result = await (await database)
         .delete('items', where: 'id = ?', whereArgs: [id]);
     FirebaseSyncService.debouncedUpload();
+    // Decrement subscription count
+    SubscriptionService.instance.decrementItemCount().catchError((_) {});
     return result;
   }
 
@@ -408,6 +413,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
   Future<int> insertCustomer(CustomerModel c) async {
     final result = await (await database).insert('customers', c.toMap());
     FirebaseSyncService.debouncedUpload();
+    // Track subscription usage
+    SubscriptionService.instance.incrementCustomerCount().catchError((_) {});
     return result;
   }
 
@@ -444,6 +451,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
     final result = await (await database)
         .delete('customers', where: 'id = ?', whereArgs: [id]);
     FirebaseSyncService.debouncedUpload();
+    // Decrement subscription count
+    SubscriptionService.instance.decrementCustomerCount().catchError((_) {});
     return result;
   }
 
@@ -538,6 +547,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
     final result = await db.insert('sale_bills', data,
         conflictAlgorithm: ConflictAlgorithm.abort);
     FirebaseSyncService.debouncedUpload();
+    // Track subscription usage
+    SubscriptionService.instance.incrementSaleBillCount().catchError((_) {});
     return result;
   }
 
@@ -659,6 +670,8 @@ CREATE TABLE IF NOT EXISTS purchase_bill_items (
   Future<int> insertPurchaseBill(Map<String, dynamic> data) async {
     final result = await (await database).insert('purchase_bills', data);
     FirebaseSyncService.debouncedUpload();
+    // Track subscription usage
+    SubscriptionService.instance.incrementPurchaseBillCount().catchError((_) {});
     return result;
   }
 

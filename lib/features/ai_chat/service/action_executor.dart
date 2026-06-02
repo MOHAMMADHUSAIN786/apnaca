@@ -19,137 +19,82 @@ class ActionExecutor {
 
       case AiActionType.createItem:
         final name = (action.data['name'] as String?)?.trim() ?? '';
-
-        // Validation: name empty
         if (name.isEmpty) {
           return ActionResult.needsInput(
               question: 'Item ka naam kya rakha jaaye?', field: 'name');
         }
-        // Validation: name cannot be pure number
-        if (double.tryParse(name) != null) {
-          return ActionResult.error(
-              message: '⚠️ Item ka naam number nahi ho sakta. Sahi naam batao (e.g. "Apple").');
+        // ── SUBSCRIPTION: item limit check ────────────────────────────
+        final itemCheck = await SubscriptionService.instance.canAddItem();
+        if (!itemCheck.allowed) {
+          return ActionResult.subscriptionLimitReached(reason: itemCheck.reason ?? 'Item limit reach ho gayi.');
         }
-
-        // Validation: negative qty
+        // ──────────────────────────────────────────────────────────────
         final qty = _toInt(action.data['qty']);
         if (qty != null && qty < 0) {
           return ActionResult.error(
-              message: '⚠️ Quantity negative nahi ho sakti. 0 ya zyada honi chahiye.');
+              message: '⚠️ Quantity negative nahi ho sakti. Sahi quantity batao.');
         }
-
-        // Validation: negative/zero price
         final price = _toDouble(action.data['price']);
         if (price != null && price <= 0) {
           return ActionResult.error(
               message: '⚠️ Price 0 ya negative nahi ho sakti. Sahi price batao.');
         }
-
-        // Duplicate check
         if (await _db.itemNameExists(name)) {
-          final existing2 = await _db.getItemByName(name);
           return ActionResult.error(
-              message: '⚠️ "$name" naam ka item pehle se exist karta hai.'
-                  'Stock: ${existing2?.qty ?? "-"} | Price: ₹${existing2?.price ?? "-"}'
-                  'Update karna hai? Batao: "$name price 150 kar do" ya "$name stock 50 badha do"');
+              message: '⚠️ "$name" item pehle se exist karta hai. Update karna hai?');
         }
-
-        // Ask optional details only if user didn't already give all info
-        final hasAllRequired = qty != null && price != null;
-        final wantsOptional = action.data['ask_optional'] == true;
-
-        if (!hasAllRequired) {
-          // Missing required fields — ask one by one
-          if (qty == null) {
-            return ActionResult.needsInput(
-                question: '"$name" ki quantity kitni hai?', field: 'qty');
-          }
-          if (price == null) {
-            return ActionResult.needsInput(
-                question: '"$name" ki price kya hai?', field: 'price');
-          }
+        if (qty == null) {
+          return ActionResult.needsInput(
+              question: '"$name" ki quantity kitni hai?', field: 'qty');
         }
-
-        // All required info present — create item
-        final newId = await _db.insertItem(ItemModel(
-          name: name, qty: qty!, price: price!,
+        if (price == null) {
+          return ActionResult.needsInput(
+              question: '"$name" ki price kya hai?', field: 'price');
+        }
+        final id = await _db.insertItem(ItemModel(
+          name: name, qty: qty, price: price,
           hsnCode: action.data['hsn_code'] as String?,
         ));
-        return ActionResult.success(reply: action.reply, affectedId: newId);
+        // NOTE: incrementItemCount handled in AppDatabase.insertItem()
+        return ActionResult.success(reply: action.reply, affectedId: id);
 
       case AiActionType.updateItem:
-      // Try name-based lookup first (AI sends name, not id)
-        final updateItemName = (action.data['name'] as String?)?.trim();
-        final updateItemId   = _extractId(action.data);
-        ItemModel? existingItem;
-
-        if (updateItemName != null && updateItemName.isNotEmpty) {
-          existingItem = await _db.getItemByName(updateItemName)
-              ?? await _db.getItemFuzzy(updateItemName);
-        }
-        if (existingItem == null && updateItemId != null) {
-          existingItem = await _db.getItemById(updateItemId);
-        }
-        if (existingItem == null) {
-          final nameToSearch = updateItemName ?? 'unknown';
-          // Check if any similar item exists
-          final allI = await _db.getAllItems();
-          final names = allI.map((i) => i.name).take(10).join(', ');
-          return ActionResult.error(
-              message: '⚠️ "$nameToSearch" naam ka item nahi mila.'
-                  'Available items: $names');
-        }
-
-        // Validation: negative qty
+        final id = _extractId(action.data);
+        if (id == null) return ActionResult.error(
+            message: 'Konsa item update karna hai? Naam batao.');
+        final existing = await _db.getItemById(id);
+        if (existing == null)
+          return ActionResult.error(message: 'Item nahi mila.');
+        // Support qty_add for "stock 100 increase karo"
         final qtyAdd = _toInt(action.data['qty_add']);
         final rawQty = _toInt(action.data['qty']);
         final newQty = qtyAdd != null && qtyAdd > 0
-            ? (existingItem.qty ?? 0) + qtyAdd
+            ? (existing.qty ?? 0) + qtyAdd
             : rawQty;
         if (newQty != null && newQty < 0) {
-          return ActionResult.error(message: '⚠️ Quantity negative nahi ho sakti.');
+          return ActionResult.error(
+              message: '⚠️ Quantity negative nahi ho sakti.');
         }
-
-        // Validation: negative/zero price
         final newPrice = _toDouble(action.data['price']);
         if (newPrice != null && newPrice <= 0) {
-          return ActionResult.error(message: '⚠️ Price 0 ya negative nahi ho sakti.');
+          return ActionResult.error(
+              message: '⚠️ Price 0 ya negative nahi ho sakti.');
         }
-
-        // Validation: new name not duplicate (if renaming)
-        final newName = action.data['new_name'] as String?;
-        if (newName != null && newName.isNotEmpty && newName != existingItem.name) {
-          if (await _db.itemNameExists(newName)) {
-            return ActionResult.error(message: '⚠️ "$newName" naam ka item pehle se exist karta hai.');
-          }
-        }
-
-        await _db.updateItem(existingItem.copyWith(
-          name: newName ?? existingItem.name,
-          qty: newQty ?? existingItem.qty,
-          price: newPrice ?? existingItem.price,
-          hsnCode: (action.data['hsn_code'] as String?) ?? existingItem.hsnCode,
+        await _db.updateItem(existing.copyWith(
+          name: action.data['name'] as String?,
+          qty: newQty,
+          price: newPrice,
+          hsnCode: action.data['hsn_code'] as String?,
         ));
         return ActionResult.success(reply: action.reply);
 
       case AiActionType.deleteItem:
-        final delItemName = (action.data['name'] as String?)?.trim();
-        final delItemId   = _extractId(action.data);
-        ItemModel? itemToDelete;
-
-        if (delItemName != null && delItemName.isNotEmpty) {
-          itemToDelete = await _db.getItemByName(delItemName)
-              ?? await _db.getItemFuzzy(delItemName);
-        }
-        if (itemToDelete == null && delItemId != null) {
-          itemToDelete = await _db.getItemById(delItemId);
-        }
-        if (itemToDelete == null) {
-          return ActionResult.error(message: '⚠️ "${delItemName ?? ""}" naam ka item nahi mila.');
-        }
-        await _db.deleteItem(itemToDelete.id!);
-        return ActionResult.success(
-            reply: '🗑️ "${itemToDelete.name}" item delete ho gaya.');
+        final id = _extractId(action.data);
+        if (id == null)
+          return ActionResult.error(message: 'Konsa item delete karna hai?');
+        await _db.deleteItem(id);
+        // NOTE: decrementItemCount handled in AppDatabase.deleteItem()
+        return ActionResult.success(reply: action.reply);
 
       case AiActionType.listItems:
         final items = await _db.getAllItems();
@@ -167,52 +112,30 @@ class ActionExecutor {
         );
 
       case AiActionType.showItemDetail:
-        final detailName = (action.data['name'] as String?)?.trim();
-        final detailId   = _extractId(action.data);
-        ItemModel? detailItem;
-
-        if (detailName != null && detailName.isNotEmpty) {
-          detailItem = await _db.getItemByName(detailName)
-              ?? await _db.getItemFuzzy(detailName);
-        }
-        if (detailItem == null && detailId != null) {
-          detailItem = await _db.getItemById(detailId);
-        }
-        if (detailItem == null) {
-          if (detailName == null || detailName.isEmpty) {
-            return ActionResult.needsInput(
-                question: 'Konsa item ki detail dekhni hai? Naam batao.', field: 'name');
-          }
-          return ActionResult.error(message: '⚠️ "$detailName" naam ka item nahi mila.');
-        }
-        // HSN check — inform clearly
-        final hsnDisplay = (detailItem.hsnCode != null && detailItem.hsnCode!.isNotEmpty)
-            ? detailItem.hsnCode!
-            : 'HSN code add nahi kiya gaya';
+        final name = action.data['name'] as String?;
+        final id = _extractId(action.data);
+        ItemModel? item;
+        if (id != null)
+          item = await _db.getItemById(id);
+        else if (name != null)
+          item = await _db.getItemByName(name) ?? await _db.getItemFuzzy(name);
+        if (item == null) return ActionResult.error(message: 'Item nahi mila.');
         return ActionResult.success(reply: action.reply, detailCard: {
           'type': 'item',
-          'Name': detailItem.name,
-          'Stock': detailItem.qty?.toString() ?? '0',
-          'Price': detailItem.price != null ? '₹${detailItem.price}' : '-',
-          'HSN Code': hsnDisplay,
+          'Name': item.name,
+          'Stock': item.qty?.toString() ?? '-',
+          'Price': item.price != null ? '₹${item.price}' : '-',
+          'HSN': item.hsnCode ?? '-',
         });
 
       case AiActionType.showItemTransactions:
-        final txnItemName = (action.data['name'] as String?)?.trim();
-        if (txnItemName == null || txnItemName.isEmpty) {
-          return ActionResult.needsInput(
-              question: 'Konsa item ka transaction dekhna hai? Naam batao.', field: 'name');
-        }
-        // Check item exists first
-        final txnItem = await _db.getItemByName(txnItemName) ?? await _db.getItemFuzzy(txnItemName);
-        if (txnItem == null) {
-          return ActionResult.error(message: '⚠️ "$txnItemName" naam ka item nahi mila. Sahi naam batao.');
-        }
-        final txns = await _db.getItemTransactions(txnItem.name);
+        final name = action.data['name'] as String?;
+        if (name == null || name.isEmpty) return ActionResult.error(
+            message: 'Konsa item ka transaction dekhna hai?');
+        final txns = await _db.getItemTransactions(name);
         if (txns.isEmpty) {
           return ActionResult.success(
-              reply: '"${txnItem.name}" ka abhi tak koi transaction nahi hua.'
-                  'Stock: ${txnItem.qty ?? 0} | Price: ₹${txnItem.price ?? 0}',
+              reply: '"$name" ka koi transaction nahi mila abhi.',
               tableData: []);
         }
         final totalSold = txns.fold<int>(
@@ -220,7 +143,7 @@ class ActionExecutor {
         final totalRevenue = txns.fold<double>(
             0, (s, t) => s + ((t['line_total'] as num?)?.toDouble() ?? 0));
         return ActionResult.success(
-          reply: '"${txnItem.name}" — ${txns
+          reply: '"$name" — ${txns
               .length} transactions | Sold: $totalSold units | Revenue: ₹${totalRevenue
               .toStringAsFixed(2)}',
           tableData: txns.map((t) =>
@@ -243,6 +166,12 @@ class ActionExecutor {
         final name = (action.data['name'] as String?)?.trim() ?? '';
         if (name.isEmpty) return ActionResult.needsInput(
             question: 'Customer ka naam?', field: 'name');
+        // ── SUBSCRIPTION: customer limit check ────────────────────────
+        final custCheck = await SubscriptionService.instance.canAddCustomer();
+        if (!custCheck.allowed) {
+          return ActionResult.subscriptionLimitReached(reason: custCheck.reason ?? 'Customer limit reach ho gayi.');
+        }
+        // ──────────────────────────────────────────────────────────────
         if (await _db.customerNameExists(name)) {
           return ActionResult.error(
               message: '⚠️ "$name" customer pehle se exist karta hai.');
@@ -261,60 +190,39 @@ class ActionExecutor {
           gstNumber: action.data['gst_number'] as String?,
           state: action.data['state'] as String?,
         ));
+        // NOTE: incrementCustomerCount handled in AppDatabase.insertCustomer()
         return ActionResult.success(reply: action.reply, affectedId: cId);
 
       case AiActionType.updateCustomer:
-      // Name-based lookup first
-        final updCustName = (action.data['name'] as String?)?.trim();
-        final updCustId   = _extractId(action.data);
-        CustomerModel? existingCust;
-
-        if (updCustName != null && updCustName.isNotEmpty) {
-          existingCust = await _db.getCustomerByName(updCustName)
-              ?? await _db.getCustomerFuzzy(updCustName);
+        final id = _extractId(action.data);
+        if (id == null) return ActionResult.error(
+            message: 'Konsa customer update karna hai?');
+        final existing = await _db.getCustomerById(id);
+        if (existing == null)
+          return ActionResult.error(message: 'Customer nahi mila.');
+        final phone = action.data['phone'] as String?;
+        if (phone != null && phone.isNotEmpty &&
+            !RegExp(r'^\d{10}$').hasMatch(phone)) {
+          return ActionResult.error(
+              message: '⚠️ Phone number 10 digits ka hona chahiye.');
         }
-        if (existingCust == null && updCustId != null) {
-          existingCust = await _db.getCustomerById(updCustId);
-        }
-        if (existingCust == null) {
-          return ActionResult.error(message: '⚠️ "${updCustName ?? ""}" naam ka customer nahi mila.');
-        }
-
-        final updPhone = action.data['phone'] as String?;
-        if (updPhone != null && updPhone.isNotEmpty && !RegExp(r'^\d{10}$').hasMatch(updPhone)) {
-          return ActionResult.error(message: '⚠️ Phone number 10 digits ka hona chahiye. "$updPhone" galat hai.');
-        }
-        final updGst = action.data['gst_number'] as String?;
-        if (updGst != null && updGst.isNotEmpty && updGst.length != 15) {
-          return ActionResult.error(message: '⚠️ GST number 15 characters ka hona chahiye.');
-        }
-        await _db.updateCustomer(existingCust.copyWith(
-          name:      action.data['new_name'] as String? ?? existingCust.name,
-          email:     action.data['email']    as String? ?? existingCust.email,
-          phone:     updPhone ?? existingCust.phone,
-          address:   action.data['address']  as String? ?? existingCust.address,
-          gstNumber: updGst   ?? existingCust.gstNumber,
-          state:     action.data['state']    as String? ?? existingCust.state,
+        await _db.updateCustomer(existing.copyWith(
+          name: action.data['name'] as String?,
+          email: action.data['email'] as String?,
+          phone: phone,
+          address: action.data['address'] as String?,
+          gstNumber: action.data['gst_number'] as String?,
+          state: action.data['state'] as String?,
         ));
         return ActionResult.success(reply: action.reply);
 
       case AiActionType.deleteCustomer:
-        final delCustName = (action.data['name'] as String?)?.trim();
-        final delCustId   = _extractId(action.data);
-        CustomerModel? custToDelete;
-
-        if (delCustName != null && delCustName.isNotEmpty) {
-          custToDelete = await _db.getCustomerByName(delCustName)
-              ?? await _db.getCustomerFuzzy(delCustName);
-        }
-        if (custToDelete == null && delCustId != null) {
-          custToDelete = await _db.getCustomerById(delCustId);
-        }
-        if (custToDelete == null) {
-          return ActionResult.error(message: '⚠️ "${delCustName ?? ""}" naam ka customer nahi mila.');
-        }
-        await _db.deleteCustomer(custToDelete.id!);
-        return ActionResult.success(reply: '🗑️ "${custToDelete.name}" customer delete ho gaya.');
+        final id = _extractId(action.data);
+        if (id == null) return ActionResult.error(
+            message: 'Konsa customer delete karna hai?');
+        await _db.deleteCustomer(id);
+        // NOTE: decrementCustomerCount handled in AppDatabase.deleteCustomer()
+        return ActionResult.success(reply: action.reply);
 
       case AiActionType.listCustomers:
         final customers = await _db.getAllCustomers();
@@ -361,7 +269,7 @@ class ActionExecutor {
           'Total Bills': custTxns.length.toString(),
           'Total Business': '₹${custTotal.toStringAsFixed(2)}',
           'Pending': '₹${custPending.toStringAsFixed(2)}',
-        }, tableData: custTxns.map((t) =>   // ✅ Always a list, even if empty
+        }, tableData: custTxns.isEmpty ? null : custTxns.map((t) =>
         {
           'Bill': t['bill_number']?.toString() ?? '-',
           'Date': t['bill_date']?.toString() ?? '-',
@@ -379,6 +287,12 @@ class ActionExecutor {
         final name = (action.data['name'] as String?)?.trim() ?? '';
         if (name.isEmpty) return ActionResult.needsInput(
             question: 'Supplier ka naam?', field: 'name');
+        // ── SUBSCRIPTION: supplier limit check (shared 50 slot) ───────
+        final supCheck = await SubscriptionService.instance.canAddCustomer();
+        if (!supCheck.allowed) {
+          return ActionResult.subscriptionLimitReached(reason: 'Supplier limit reach ho gayi. Free plan mein max 50 suppliers allowed hain. Upgrade karo!');
+        }
+        // ──────────────────────────────────────────────────────────────
         if (await _db.supplierNameExists(name)) {
           return ActionResult.error(
               message: '⚠️ "$name" supplier pehle se exist karta hai.');
@@ -397,54 +311,33 @@ class ActionExecutor {
           gstNumber: action.data['gst_number'] as String?,
           state: action.data['state'] as String?,
         ));
+        // NOTE: supplier count tracked separately — no subscription limit on suppliers
         return ActionResult.success(reply: action.reply, affectedId: sId);
 
       case AiActionType.updateSupplier:
-        final updSupName = (action.data['name'] as String?)?.trim();
-        final updSupId   = _extractId(action.data);
-        SupplierModel? existingSup;
-
-        if (updSupName != null && updSupName.isNotEmpty) {
-          existingSup = await _db.getSupplierByName(updSupName)
-              ?? await _db.getSupplierFuzzy(updSupName);
-        }
-        if (existingSup == null && updSupId != null) {
-          existingSup = await _db.getSupplierById(updSupId);
-        }
-        if (existingSup == null) {
-          return ActionResult.error(message: '⚠️ "${updSupName ?? ""}" naam ka supplier nahi mila.');
-        }
-        final updSupPhone = action.data['phone'] as String?;
-        if (updSupPhone != null && updSupPhone.isNotEmpty && !RegExp(r'^\d{10}$').hasMatch(updSupPhone)) {
-          return ActionResult.error(message: '⚠️ Phone number 10 digits ka hona chahiye.');
-        }
-        await _db.updateSupplier(existingSup.copyWith(
-          name:      action.data['new_name'] as String? ?? existingSup.name,
-          email:     action.data['email']    as String? ?? existingSup.email,
-          phone:     updSupPhone ?? existingSup.phone,
-          address:   action.data['address']  as String? ?? existingSup.address,
-          gstNumber: action.data['gst_number'] as String? ?? existingSup.gstNumber,
-          state:     action.data['state']    as String? ?? existingSup.state,
+        final id = _extractId(action.data);
+        if (id == null) return ActionResult.error(
+            message: 'Konsa supplier update karna hai?');
+        final existing = await _db.getSupplierById(id);
+        if (existing == null)
+          return ActionResult.error(message: 'Supplier nahi mila.');
+        await _db.updateSupplier(existing.copyWith(
+          name: action.data['name'] as String?,
+          email: action.data['email'] as String?,
+          phone: action.data['phone'] as String?,
+          address: action.data['address'] as String?,
+          gstNumber: action.data['gst_number'] as String?,
+          state: action.data['state'] as String?,
         ));
         return ActionResult.success(reply: action.reply);
 
       case AiActionType.deleteSupplier:
-        final delSupName = (action.data['name'] as String?)?.trim();
-        final delSupId   = _extractId(action.data);
-        SupplierModel? supToDelete;
-
-        if (delSupName != null && delSupName.isNotEmpty) {
-          supToDelete = await _db.getSupplierByName(delSupName)
-              ?? await _db.getSupplierFuzzy(delSupName);
-        }
-        if (supToDelete == null && delSupId != null) {
-          supToDelete = await _db.getSupplierById(delSupId);
-        }
-        if (supToDelete == null) {
-          return ActionResult.error(message: '⚠️ "${delSupName ?? ""}" naam ka supplier nahi mila.');
-        }
-        await _db.deleteSupplier(supToDelete.id!);
-        return ActionResult.success(reply: '🗑️ "${supToDelete.name}" supplier delete ho gaya.');
+        final id = _extractId(action.data);
+        if (id == null) return ActionResult.error(
+            message: 'Konsa supplier delete karna hai?');
+        await _db.deleteSupplier(id);
+        // NOTE: no supplier count tracked in subscription
+        return ActionResult.success(reply: action.reply);
 
       case AiActionType.listSuppliers:
         final suppliers = await _db.getAllSuppliers();
@@ -490,7 +383,7 @@ class ActionExecutor {
           'Total Bills': supTxns.length.toString(),
           'Total Purchased': '₹${supTotal.toStringAsFixed(2)}',
           'Due': '₹${supPending.toStringAsFixed(2)}',
-        }, tableData: supTxns.map((t) =>   // ✅ Always list, never null
+        }, tableData: supTxns.isEmpty ? null : supTxns.map((t) =>
         {
           'Bill': t['bill_number']?.toString() ?? '-',
           'Date': t['bill_date']?.toString() ?? '-',
@@ -674,66 +567,6 @@ class ActionExecutor {
     // ══════════════════════════════════════════════════════
     //  FLOW
     // ══════════════════════════════════════════════════════
-
-
-    // ══════════════════════════════════════════════════════
-    //  EDIT SALE BILL (BUG3 + PART3 FIX)
-    //  Supports: update_item_qty, update_item_price,
-    //            add_item, remove_item, update_status, open
-    // ══════════════════════════════════════════════════════
-
-      case AiActionType.editSaleBill:
-        return await _editSaleBill(action);
-
-      case AiActionType.deleteSaleBill:
-        final delBillNum = action.data['bill_number'] as String?;
-        if (delBillNum == null || delBillNum.isEmpty) {
-          return ActionResult.error(message: 'Bill number batao (jaise: SB-2026-0001)');
-        }
-        final delBillData = await _db.getSaleBillByNumber(delBillNum);
-        if (delBillData == null) return ActionResult.error(message: '"$delBillNum" bill nahi mila.');
-        final delBillId = delBillData['id'] as int;
-        await _db.deleteSaleBillWithStockRestore(delBillId);
-        return ActionResult.success(reply: '🗑️ Bill $delBillNum delete ho gaya. Stock restore ✓');
-
-    // ══════════════════════════════════════════════════════
-    //  EDIT PURCHASE BILL (PART3 FIX)
-    // ══════════════════════════════════════════════════════
-
-      case AiActionType.editPurchaseBill:
-        return await _editPurchaseBill(action);
-
-      case AiActionType.deletePurchaseBill:
-        final delPBNum = action.data['bill_number'] as String?;
-        if (delPBNum == null || delPBNum.isEmpty) {
-          return ActionResult.error(message: 'Purchase bill number batao (jaise: PB-2026-0001)');
-        }
-        final delPBData = await _db.getPurchaseBillByNumber(delPBNum);
-        if (delPBData == null) return ActionResult.error(message: '"$delPBNum" purchase bill nahi mila.');
-        final delPBId = delPBData['id'] as int;
-        await _db.deletePurchaseBillWithStockDeduct(delPBId);
-        return ActionResult.success(reply: '🗑️ Purchase Bill $delPBNum delete ho gaya. Stock adjusted ✓');
-
-    // ══════════════════════════════════════════════════════
-    //  BULK UPDATE PRICES (PART3 FIX)
-    // ══════════════════════════════════════════════════════
-
-      case AiActionType.bulkUpdatePrices:
-        return await _bulkUpdatePrices(action);
-
-    // ══════════════════════════════════════════════════════
-    //  MARK MULTIPLE BILLS PAID (PART3 FIX)
-    // ══════════════════════════════════════════════════════
-
-      case AiActionType.markMultipleBillsPaid:
-        return await _markMultipleBillsPaid(action);
-
-    // ══════════════════════════════════════════════════════
-    //  SEARCH BILLS (PART3 FIX)
-    // ══════════════════════════════════════════════════════
-
-      case AiActionType.searchBills:
-        return await _searchBills(action);
 
       case AiActionType.ask:
         return ActionResult.needsInput(
@@ -1238,9 +1071,9 @@ class ActionExecutor {
 
   Future<ActionResult> _initiateBillFlow(ParsedAction action) async {
     // ── SUBSCRIPTION CHECK ─────────────────────────────────────────────────
-    final canCreate = await SubscriptionService.instance.canCreateBill();
-    if (!canCreate) {
-      return ActionResult.subscriptionRequired();
+    final check = await SubscriptionService.instance.canCreateSaleBill();
+    if (!check.allowed) {
+      return ActionResult.subscriptionLimitReached(reason: check.reason ?? 'Sale bill limit khatam.');
     }
     // ───────────────────────────────────────────────────────────────────────
 
@@ -1307,9 +1140,9 @@ class ActionExecutor {
 
   Future<ActionResult> createBillFromState(BillCreationState state) async {
     // ── SUBSCRIPTION CHECK ─────────────────────────────────────────────────
-    final canCreate = await SubscriptionService.instance.canCreateBill();
-    if (!canCreate) {
-      return ActionResult.subscriptionRequired();
+    final check = await SubscriptionService.instance.canCreateSaleBill();
+    if (!check.allowed) {
+      return ActionResult.subscriptionLimitReached(reason: check.reason ?? 'Sale bill limit khatam.');
     }
     // ───────────────────────────────────────────────────────────────────────
 
@@ -1413,11 +1246,7 @@ class ActionExecutor {
       await _db.deductItemStock(line['item_id'] as int, line['qty'] as int);
     }
 
-    // ── increment subscription bill count ──────────────────────────────────
-    await SubscriptionService.instance.incrementBillCount();
-    // ──────────────────────────────────────────────────────────────────────
-
-    final discStr = billDiscount > 0 ? '\nDiscount: -₹$billDiscount' : '';
+    // NOTE: incrementSaleBillCount is handled in AppDatabase.insertSaleBill()
     final taxStr = '${state.taxType == 'inclusive'
         ? 'Inclusive'
         : 'Exclusive'} GST: ₹$gstAmount';
@@ -1425,7 +1254,7 @@ class ActionExecutor {
     return ActionResult.success(
       reply: '✅ Bill $billNumber bana diya!\n${c.name} | ${billLines
           .length} item(s)'
-          '\nSubtotal: ₹$subtotal$discStr\n$taxStr\nTotal: ₹$totalAmount',
+          '\nSubtotal: ₹$subtotal\n$taxStr\nTotal: ₹$totalAmount',
       detailCard: {
         'type': 'sale_bill',
         'bill_id': billId,
@@ -1455,9 +1284,9 @@ class ActionExecutor {
 
   Future<ActionResult> _initiatePurchaseBillFlow(ParsedAction action) async {
     // ── SUBSCRIPTION CHECK ─────────────────────────────────────────────────
-    final canCreate = await SubscriptionService.instance.canCreateBill();
-    if (!canCreate) {
-      return ActionResult.subscriptionRequired();
+    final check = await SubscriptionService.instance.canCreatePurchaseBill();
+    if (!check.allowed) {
+      return ActionResult.subscriptionLimitReached(reason: check.reason ?? 'Purchase bill limit khatam.');
     }
     // ───────────────────────────────────────────────────────────────────────
 
@@ -1568,9 +1397,7 @@ class ActionExecutor {
       await _db.addItemStock(line['item_id'] as int, line['qty'] as int);
     }
 
-    // ── increment subscription bill count ──────────────────────────────────
-    await SubscriptionService.instance.incrementBillCount();
-    // ──────────────────────────────────────────────────────────────────────
+    // NOTE: incrementPurchaseBillCount is handled in AppDatabase.insertPurchaseBill()
 
     return ActionResult.success(
       reply: '✅ Purchase Bill $billNumber bana diya!\n${supplier
@@ -1599,486 +1426,6 @@ class ActionExecutor {
     );
   }
 
-
-  // ══════════════════════════════════════════════════════════════════════
-  //  EDIT SALE BILL
-  // ══════════════════════════════════════════════════════════════════════
-  Future<ActionResult> _editSaleBill(ParsedAction action) async {
-    final billNumber = action.data['bill_number'] as String?;
-    final editType = action.data['edit_type'] as String? ?? 'open';
-
-    // Resolve bill — "latest" = most recent bill
-    Map<String, dynamic>? billData;
-    if (billNumber == 'latest' || billNumber == null) {
-      final allBills = await _db.getAllSaleBills();
-      if (allBills.isEmpty) return ActionResult.error(message: 'Koi sale bill nahi mila.');
-      billData = allBills.first;
-    } else {
-      billData = await _db.getSaleBillByNumber(billNumber);
-    }
-    if (billData == null) {
-      return ActionResult.error(message: '"$billNumber" bill nahi mila. Sahi bill number batao.');
-    }
-
-    final billId = billData['id'] as int;
-    final actualBillNum = billData['bill_number'] as String;
-
-    switch (editType) {
-      case 'update_status':
-        final newStatus = action.data['payment_status'] as String? ?? 'paid';
-        await _db.updateSaleBillStatus(billId, newStatus);
-        return ActionResult.success(reply: '✅ $actualBillNum — status "$newStatus" ho gaya!');
-
-      case 'update_item_qty':
-        final itemName = (action.data['item_name'] as String?)?.trim();
-        final newQty = _toInt(action.data['new_qty']);
-        if (itemName == null || newQty == null) {
-          return ActionResult.error(message: 'Item name aur new qty batao.');
-        }
-        final lineItems = await _db.getSaleBillItems(billId);
-        final lineIdx = lineItems.indexWhere((l) =>
-        (l['item_name'] as String).toLowerCase() == itemName.toLowerCase());
-        if (lineIdx == -1) {
-          return ActionResult.error(message: '"$itemName" is bill mein nahi mila.');
-        }
-        final oldQty = lineItems[lineIdx]['qty'] as int;
-        final itemId = lineItems[lineIdx]['item_id'] as int?;
-
-        // Adjust stock: return old qty, deduct new qty
-        if (itemId != null) {
-          await _db.restoreItemStock(itemId, oldQty);
-          final item = await _db.getItemById(itemId);
-          if (item != null && item.qty != null && item.qty! < newQty) {
-            // Rollback
-            await _db.deductItemStock(itemId, oldQty);
-            return ActionResult.stockInsufficient(
-                itemName: item.name, requested: newQty, available: item.qty!);
-          }
-          await _db.deductItemStock(itemId, newQty);
-        }
-
-        // Update line item qty + recalculate line_total
-        final unitPrice = (lineItems[lineIdx]['unit_price'] as num).toDouble();
-        final taxRate = (lineItems[lineIdx]['tax_rate'] as num?)?.toDouble() ?? 0.0;
-        final newLineBase = unitPrice * newQty;
-        final newTaxAmt = double.parse((newLineBase * taxRate / 100).toStringAsFixed(2));
-        final newLineTotal = double.parse((newLineBase + newTaxAmt).toStringAsFixed(2));
-
-        await (await _db.database).update(
-          'sale_bill_items',
-          {'qty': newQty, 'tax_amount': newTaxAmt, 'line_total': newLineTotal},
-          where: 'bill_id = ? AND item_name = ?',
-          whereArgs: [billId, lineItems[lineIdx]['item_name']],
-        );
-        await _recalculateSaleBillTotals(billId);
-        return ActionResult.success(
-            reply: '✅ $actualBillNum — "$itemName" qty $oldQty → $newQty. Total recalculated ✓');
-
-      case 'update_item_price':
-        final itemName = (action.data['item_name'] as String?)?.trim();
-        final newPrice = _toDouble(action.data['new_price']);
-        if (itemName == null || newPrice == null) {
-          return ActionResult.error(message: 'Item name aur new price batao.');
-        }
-        final lineItems = await _db.getSaleBillItems(billId);
-        final lineIdx = lineItems.indexWhere((l) =>
-        (l['item_name'] as String).toLowerCase() == itemName.toLowerCase());
-        if (lineIdx == -1) {
-          return ActionResult.error(message: '"$itemName" is bill mein nahi mila.');
-        }
-        final qty = lineItems[lineIdx]['qty'] as int;
-        final taxRate = (lineItems[lineIdx]['tax_rate'] as num?)?.toDouble() ?? 0.0;
-        final newLineBase = newPrice * qty;
-        final newTaxAmt = double.parse((newLineBase * taxRate / 100).toStringAsFixed(2));
-        final newLineTotal = double.parse((newLineBase + newTaxAmt).toStringAsFixed(2));
-        await (await _db.database).update(
-          'sale_bill_items',
-          {'unit_price': newPrice, 'tax_amount': newTaxAmt, 'line_total': newLineTotal},
-          where: 'bill_id = ? AND item_name = ?',
-          whereArgs: [billId, lineItems[lineIdx]['item_name']],
-        );
-        await _recalculateSaleBillTotals(billId);
-        return ActionResult.success(
-            reply: '✅ $actualBillNum — "$itemName" price → ₹$newPrice. Total recalculated ✓');
-
-      case 'add_item':
-        final addItemName = (action.data['item_name'] as String?)?.trim();
-        final addQty = _toInt(action.data['qty']) ?? 1;
-        if (addItemName == null || addItemName.isEmpty) {
-          return ActionResult.error(message: 'Konsa item add karna hai?');
-        }
-        final addItem = await _db.getItemByName(addItemName) ??
-            await _db.getItemFuzzy(addItemName);
-        if (addItem == null) {
-          return ActionResult.error(message: '"$addItemName" item DB mein nahi mila.');
-        }
-        if (addItem.qty != null && addItem.qty! < addQty) {
-          return ActionResult.stockInsufficient(
-              itemName: addItem.name, requested: addQty, available: addItem.qty!);
-        }
-        final addPrice = _toDouble(action.data['price']) ?? addItem.price ?? 0.0;
-        final addTaxRate = _toDouble(action.data['tax_rate']) ?? 0.0;
-        final addTaxAmt = double.parse((addPrice * addQty * addTaxRate / 100).toStringAsFixed(2));
-        final addLineTotal = double.parse((addPrice * addQty + addTaxAmt).toStringAsFixed(2));
-        await _db.insertSaleBillItem({
-          'bill_id': billId,
-          'item_id': addItem.id,
-          'item_name': addItem.name,
-          'qty': addQty,
-          'unit_price': addPrice,
-          'discount_amount': 0.0,
-          'tax_rate': addTaxRate,
-          'tax_amount': addTaxAmt,
-          'line_total': addLineTotal,
-        });
-        if (addItem.id != null) await _db.deductItemStock(addItem.id!, addQty);
-        await _recalculateSaleBillTotals(billId);
-        return ActionResult.success(
-            reply: '✅ $actualBillNum mein "${addItem.name}" x$addQty add ho gaya. Total recalculated ✓');
-
-      case 'remove_item':
-        final removeItemName = (action.data['item_name'] as String?)?.trim();
-        if (removeItemName == null) {
-          return ActionResult.error(message: 'Konsa item remove karna hai?');
-        }
-        final removeLines = await _db.getSaleBillItems(billId);
-        final removeLine = removeLines.firstWhere(
-              (l) => (l['item_name'] as String).toLowerCase() == removeItemName.toLowerCase(),
-          orElse: () => <String, dynamic>{},
-        );
-        if (removeLine.isEmpty) {
-          return ActionResult.error(message: '"$removeItemName" is bill mein nahi mila.');
-        }
-        final removeItemId = removeLine['item_id'] as int?;
-        final removeQty = removeLine['qty'] as int;
-        if (removeItemId != null) await _db.restoreItemStock(removeItemId, removeQty);
-        await (await _db.database).delete(
-          'sale_bill_items',
-          where: 'bill_id = ? AND item_name = ?',
-          whereArgs: [billId, removeLine['item_name']],
-        );
-        await _recalculateSaleBillTotals(billId);
-        return ActionResult.success(
-            reply: '✅ $actualBillNum se "${removeLine["item_name"]}" remove ho gaya. Stock restored ✓');
-
-      case 'open':
-      default:
-      // Show current bill for user to see before editing
-        final lineItems = await _db.getSaleBillItems(billId);
-        return ActionResult.success(
-          reply: action.reply.isNotEmpty ? action.reply : '$actualBillNum — edit ke liye:',
-          detailCard: {
-            'type': 'sale_bill',
-            'bill_id': billId,
-            'Bill No': actualBillNum,
-            'Customer': billData['customer_name'] ?? '-',
-            'Date': billData['bill_date'] ?? '-',
-            'Total': '₹${billData['total_amount']}',
-            'Status': billData['payment_status'] ?? '-',
-            'Payment': billData['payment_mode'] ?? '-',
-          },
-          tableData: lineItems.map((l) => {
-            'Item': l['item_name'],
-            'Qty': l['qty'].toString(),
-            'Price': '₹${l['unit_price']}',
-            'Tax': '${l['tax_rate']}%',
-            'Total': '₹${l['line_total']}',
-          }).toList(),
-        );
-    }
-  }
-
-  Future<void> _recalculateSaleBillTotals(int billId) async {
-    final db = await _db.database;
-    final lines = await _db.getSaleBillItems(billId);
-    final subtotal = double.parse(
-        lines.fold<double>(0, (s, l) => s + (l['unit_price'] as num).toDouble() * (l['qty'] as int))
-            .toStringAsFixed(2));
-    final gstAmount = double.parse(
-        lines.fold<double>(0, (s, l) => s + (l['tax_amount'] as num).toDouble())
-            .toStringAsFixed(2));
-    // Get existing discount
-    final billRow = await db.query('sale_bills', where: 'id = ?', whereArgs: [billId]);
-    final discountAmt = billRow.isEmpty ? 0.0 : (billRow.first['discount_amount'] as num?)?.toDouble() ?? 0.0;
-    final totalAmount = double.parse((subtotal - discountAmt + gstAmount).toStringAsFixed(2));
-    await db.update('sale_bills',
-        {'subtotal': subtotal, 'gst_amount': gstAmount, 'total_amount': totalAmount},
-        where: 'id = ?', whereArgs: [billId]);
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  //  EDIT PURCHASE BILL
-  // ══════════════════════════════════════════════════════════════════════
-  Future<ActionResult> _editPurchaseBill(ParsedAction action) async {
-    final billNumber = action.data['bill_number'] as String?;
-    final editType = action.data['edit_type'] as String? ?? 'open';
-
-    Map<String, dynamic>? billData;
-    if (billNumber == null || billNumber == 'latest') {
-      final allBills = await _db.getAllPurchaseBills();
-      if (allBills.isEmpty) return ActionResult.error(message: 'Koi purchase bill nahi mila.');
-      billData = allBills.first;
-    } else {
-      billData = await _db.getPurchaseBillByNumber(billNumber);
-    }
-    if (billData == null) {
-      return ActionResult.error(message: '"$billNumber" purchase bill nahi mila.');
-    }
-
-    final billId = billData['id'] as int;
-    final actualNum = billData['bill_number'] as String;
-
-    switch (editType) {
-      case 'update_status':
-        final ns = action.data['payment_status'] as String? ?? 'paid';
-        await _db.updatePurchaseBillStatus(billId, ns);
-        return ActionResult.success(reply: '✅ $actualNum — "$ns" ho gaya!');
-
-      case 'add_item':
-        final addItemName = (action.data['item_name'] as String?)?.trim();
-        final addQty = _toInt(action.data['qty']) ?? 1;
-        final addPrice = _toDouble(action.data['price']) ?? 0.0;
-        if (addItemName == null) return ActionResult.error(message: 'Item naam batao.');
-        if (addPrice <= 0) return ActionResult.error(message: '"$addItemName" ki price batao.');
-        var addItem = await _db.getItemByName(addItemName) ?? await _db.getItemFuzzy(addItemName);
-        if (addItem == null) {
-          // Auto-create item in purchase flow with given price
-          final newId = await _db.insertItem(ItemModel(
-            name: addItemName, qty: 0, price: addPrice,
-          ));
-          addItem = await _db.getItemById(newId);
-        }
-        if (addItem == null) return ActionResult.error(message: '"$addItemName" item nahi mila.');
-        final taxRate = _toDouble(action.data['tax_rate']) ?? 0.0;
-        final taxAmt = double.parse((addPrice * addQty * taxRate / 100).toStringAsFixed(2));
-        final lineTotal = double.parse((addPrice * addQty + taxAmt).toStringAsFixed(2));
-        await _db.insertPurchaseBillItem({
-          'bill_id': billId, 'item_id': addItem.id, 'item_name': addItem.name,
-          'qty': addQty, 'unit_price': addPrice,
-          'tax_rate': taxRate, 'tax_amount': taxAmt, 'line_total': lineTotal,
-        });
-        if (addItem.id != null) await _db.addItemStock(addItem.id!, addQty);
-        await _recalculatePurchaseBillTotals(billId);
-        return ActionResult.success(reply: '✅ $actualNum mein "${addItem.name}" x$addQty add ✓');
-
-      case 'remove_item':
-        final removeItemName = (action.data['item_name'] as String?)?.trim();
-        if (removeItemName == null) return ActionResult.error(message: 'Item naam batao.');
-        final lines = await _db.getPurchaseBillItems(billId);
-        final line = lines.firstWhere(
-                (l) => (l['item_name'] as String).toLowerCase() == removeItemName.toLowerCase(),
-            orElse: () => <String, dynamic>{});
-        if (line.isEmpty) return ActionResult.error(message: '"$removeItemName" is bill mein nahi mila.');
-        final rmItemId = line['item_id'] as int?;
-        final rmQty = line['qty'] as int;
-        if (rmItemId != null) await _db.deductItemStock(rmItemId, rmQty);
-        await (await _db.database).delete('purchase_bill_items',
-            where: 'bill_id = ? AND item_name = ?',
-            whereArgs: [billId, line['item_name']]);
-        await _recalculatePurchaseBillTotals(billId);
-        return ActionResult.success(reply: '✅ $actualNum se "${line["item_name"]}" remove ✓');
-
-      case 'open':
-      default:
-        final lineItems = await _db.getPurchaseBillItems(billId);
-        return ActionResult.success(
-          reply: action.reply.isNotEmpty ? action.reply : '$actualNum:',
-          detailCard: {
-            'type': 'purchase_bill', 'bill_id': billId, 'Bill No': actualNum,
-            'Supplier': billData['supplier_name'] ?? '-',
-            'Date': billData['bill_date'] ?? '-',
-            'Total': '₹${billData['total_amount']}',
-            'Status': billData['payment_status'] ?? '-',
-          },
-          tableData: lineItems.map((l) => {
-            'Item': l['item_name'], 'Qty': l['qty'].toString(),
-            'Price': '₹${l['unit_price']}', 'Tax': '${l['tax_rate']}%',
-            'Total': '₹${l['line_total']}',
-          }).toList(),
-        );
-    }
-  }
-
-  Future<void> _recalculatePurchaseBillTotals(int billId) async {
-    final db = await _db.database;
-    final lines = await _db.getPurchaseBillItems(billId);
-    final subtotal = double.parse(
-        lines.fold<double>(0, (s, l) => s + (l['unit_price'] as num).toDouble() * (l['qty'] as int))
-            .toStringAsFixed(2));
-    final taxAmount = double.parse(
-        lines.fold<double>(0, (s, l) => s + (l['tax_amount'] as num).toDouble())
-            .toStringAsFixed(2));
-    final total = double.parse((subtotal + taxAmount).toStringAsFixed(2));
-    await db.update('purchase_bills',
-        {'subtotal': subtotal, 'tax_amount': taxAmount, 'total_amount': total},
-        where: 'id = ?', whereArgs: [billId]);
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  //  BULK UPDATE PRICES
-  // ══════════════════════════════════════════════════════════════════════
-  Future<ActionResult> _bulkUpdatePrices(ParsedAction action) async {
-    final changeType = action.data['change_type'] as String? ?? 'percent'; // 'percent' | 'amount'
-    final changeValue = _toDouble(action.data['change_value']) ?? 0;
-    final direction = action.data['direction'] as String? ?? 'increase'; // 'increase' | 'decrease'
-    final targetNames = action.data['item_names'] as List<dynamic>?;
-
-    if (changeValue <= 0) {
-      return ActionResult.error(message: 'Change value batao. Example: "10% badha do" ya "50 rupee kam karo"');
-    }
-
-    final items = targetNames != null && targetNames.isNotEmpty
-        ? await Future.wait(targetNames.map((n) async =>
-    await _db.getItemByName(n.toString()) ?? await _db.getItemFuzzy(n.toString())))
-        .then((list) => list.whereType<dynamic>().toList())
-        : await _db.getAllItems();
-
-    if (items.isEmpty) return ActionResult.error(message: 'Koi item nahi mila.');
-
-    int updated = 0;
-    for (final item in items) {
-      if (item == null) continue;
-      final currentPrice = item.price ?? 0.0;
-      double newPrice;
-      if (changeType == 'percent') {
-        newPrice = direction == 'increase'
-            ? currentPrice * (1 + changeValue / 100)
-            : currentPrice * (1 - changeValue / 100);
-      } else {
-        newPrice = direction == 'increase'
-            ? currentPrice + changeValue
-            : currentPrice - changeValue;
-      }
-      if (newPrice <= 0) newPrice = 0.01;
-      newPrice = double.parse(newPrice.toStringAsFixed(2));
-      await _db.updateItem(item.copyWith(price: newPrice));
-      updated++;
-    }
-
-    final op = direction == 'increase' ? '+' : '-';
-    final unit = changeType == 'percent' ? '$changeValue%' : '₹$changeValue';
-    return ActionResult.success(
-        reply: '✅ $updated items ki price $op$unit kar diya gaya!');
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  //  MARK MULTIPLE BILLS PAID
-  // ══════════════════════════════════════════════════════════════════════
-  Future<ActionResult> _markMultipleBillsPaid(ParsedAction action) async {
-    final customerName = action.data['customer_name'] as String?;
-    final filter = action.data['filter'] as String? ?? 'all_unpaid'; // 'today', 'all_unpaid'
-
-    var bills = await _db.getAllSaleBills();
-
-    // Filter by customer
-    if (customerName != null && customerName.isNotEmpty) {
-      bills = bills.where((b) =>
-          (b['customer_name'] as String? ?? '').toLowerCase().contains(customerName.toLowerCase()))
-          .toList();
-    }
-
-    // Filter by date
-    if (filter == 'today') {
-      final today = DateTime.now().toIso8601String().split('T')[0];
-      bills = bills.where((b) => b['bill_date'] == today).toList();
-    }
-
-    // Keep only unpaid/partial
-    bills = bills.where((b) =>
-    b['payment_status'] == 'unpaid' || b['payment_status'] == 'partial').toList();
-
-    if (bills.isEmpty) {
-      return ActionResult.success(
-          reply: '✅ Koi unpaid bill nahi mila${customerName != null ? " ($customerName)" : ""}.');
-    }
-
-    for (final bill in bills) {
-      await _db.updateSaleBillStatus(bill['id'] as int, 'paid');
-    }
-
-    final totalMarked = bills.length;
-    final totalAmt = bills.fold<double>(0, (s, b) => s + ((b['total_amount'] as num?)?.toDouble() ?? 0));
-    return ActionResult.success(
-        reply: '✅ $totalMarked bills paid mark ho gaye! Total: ₹${totalAmt.toStringAsFixed(2)}',
-        tableData: bills.map((b) => {
-          'Bill': b['bill_number'],
-          'Customer': b['customer_name'] ?? '-',
-          'Amount': '₹${b['total_amount']}',
-        }).toList());
-  }
-
-  // ══════════════════════════════════════════════════════════════════════
-  //  SEARCH BILLS
-  // ══════════════════════════════════════════════════════════════════════
-  Future<ActionResult> _searchBills(ParsedAction action) async {
-    final billType = action.data['bill_type'] as String? ?? 'sale';
-    final customerName = action.data['customer_name'] as String?;
-    final supplierName = action.data['supplier_name'] as String?;
-    final status = action.data['status'] as String?;
-    final amountAround = _toDouble(action.data['amount_around']);
-    final dateRange = action.data['date_range'] as String?;
-
-    if (billType == 'purchase') {
-      var bills = await _db.getAllPurchaseBills();
-      if (supplierName != null) {
-        bills = bills.where((b) => (b['supplier_name'] as String? ?? '').toLowerCase().contains(supplierName.toLowerCase())).toList();
-      }
-      if (status != null) bills = bills.where((b) => b['payment_status'] == status).toList();
-      if (amountAround != null) {
-        bills = bills.where((b) {
-          final amt = (b['total_amount'] as num?)?.toDouble() ?? 0;
-          return (amt - amountAround).abs() <= amountAround * 0.15;
-        }).toList();
-      }
-      if (bills.isEmpty) return ActionResult.success(reply: 'Koi purchase bill nahi mila.', tableData: []);
-      return ActionResult.success(
-        reply: '${bills.length} purchase bill(s) mile:',
-        tableData: bills.take(20).map((b) => {
-          'Bill': b['bill_number'], 'Supplier': b['supplier_name'] ?? '-',
-          'Date': b['bill_date'], 'Amount': '₹${b['total_amount']}',
-          'Status': b['payment_status'],
-        }).toList(),
-      );
-    }
-
-    // Sale bills
-    var bills = await _db.getAllSaleBills();
-
-    if (customerName != null) {
-      bills = bills.where((b) =>
-          (b['customer_name'] as String? ?? '').toLowerCase().contains(customerName.toLowerCase()))
-          .toList();
-    }
-    if (status != null) {
-      bills = bills.where((b) => b['payment_status'] == status).toList();
-    }
-    if (amountAround != null) {
-      bills = bills.where((b) {
-        final amt = (b['total_amount'] as num?)?.toDouble() ?? 0;
-        return (amt - amountAround).abs() <= amountAround * 0.15;
-      }).toList();
-    }
-    if (dateRange == 'last_week') {
-      final weekAgo = DateTime.now().subtract(const Duration(days: 7)).toIso8601String().split('T')[0];
-      bills = bills.where((b) => (b['bill_date'] ?? '') >= weekAgo).toList();
-    } else if (dateRange == 'today') {
-      final today = DateTime.now().toIso8601String().split('T')[0];
-      bills = bills.where((b) => b['bill_date'] == today).toList();
-    }
-
-    if (bills.isEmpty) return ActionResult.success(reply: 'Koi bill nahi mila.', tableData: []);
-
-    return ActionResult.success(
-      reply: '${bills.length} bill(s) mile:',
-      tableData: bills.take(20).map((b) => {
-        'Bill': b['bill_number'], 'Customer': b['customer_name'] ?? '-',
-        'Date': b['bill_date'], 'Amount': '₹${b['total_amount']}',
-        'Status': b['payment_status'],
-      }).toList(),
-    );
-  }
-
-
   // ── Helpers ─────────────────────────────────────────────────────────
 
   int? _extractId(Map<String, dynamic> data) {
@@ -2105,4 +1452,5 @@ class ActionExecutor {
     if (v is String) return double.tryParse(v);
     return null;
   }
+
 }

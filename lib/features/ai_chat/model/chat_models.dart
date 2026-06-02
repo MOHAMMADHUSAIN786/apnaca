@@ -1,12 +1,4 @@
-// lib/features/ai_chat/model/chat_models.dart
 import 'bill_creation_state.dart';
-
-// ══════════════════════════════════════════════════════════════════════════════
-// FIX 4 — OptionalStep enum moved from chat_bloc.dart to here (public, typed)
-// BEFORE: enum _OptionalStep { none, customer, supplier, item }  (private, in bloc)
-// AFTER:  enum OptionalStep  { none, customer, supplier, item }  (public, in models)
-// ══════════════════════════════════════════════════════════════════════════════
-enum OptionalStep { none, customer, supplier, item }
 
 class ChatMessage {
   final String role;
@@ -49,19 +41,14 @@ enum StockIssueType { zero, insufficient }
 enum AiActionType {
   // Items
   createItem, updateItem, deleteItem, listItems, showItemDetail, showItemTransactions,
-  // Bulk item ops
-  bulkUpdatePrices,
   // Customers
   createCustomer, updateCustomer, deleteCustomer, listCustomers, showCustomerDetail,
   // Suppliers
   createSupplier, updateSupplier, deleteSupplier, listSuppliers, showSupplierDetail,
   // Sale Bills
-  createSaleBill, listSaleBills, showSaleBillDetail,
-  updateSaleBillStatus, editSaleBill, deleteSaleBill,
-  markMultipleBillsPaid, searchBills,
+  createSaleBill, listSaleBills, showSaleBillDetail, updateSaleBillStatus,
   // Purchase Bills
-  createPurchaseBill, listPurchaseBills, showPurchaseBillDetail,
-  updatePurchaseBillStatus, editPurchaseBill, deletePurchaseBill,
+  createPurchaseBill, listPurchaseBills, showPurchaseBillDetail, updatePurchaseBillStatus,
   // Analytics
   getAnalytics,
   // Flow
@@ -106,12 +93,6 @@ class ActionResult {
   final BillCreationState? initialBillState;
   final StockIssue? stockIssue;
 
-  final String? pendingEntityName;
-
-  // FIX 4 — BEFORE: final dynamic pendingEntityType;
-  // AFTER:  final OptionalStep? pendingEntityType;  (fully type-safe, no dynamic)
-  final OptionalStep? pendingEntityType;
-
   const ActionResult._({
     required this.type,
     required this.reply,
@@ -123,8 +104,6 @@ class ActionResult {
     this.searchedSupplierName,
     this.initialBillState,
     this.stockIssue,
-    this.pendingEntityName,
-    this.pendingEntityType, // OptionalStep? instead of dynamic
   });
 
   factory ActionResult.success({
@@ -132,8 +111,6 @@ class ActionResult {
     List<Map<String, dynamic>>? tableData,
     Map<String, dynamic>? detailCard,
     int? affectedId,
-    String? pendingEntityName,
-    OptionalStep? pendingEntityType, // FIX 4 — typed
   }) =>
       ActionResult._(
         type: ActionResultType.success,
@@ -141,8 +118,6 @@ class ActionResult {
         tableData: tableData,
         detailCard: detailCard,
         affectedId: affectedId,
-        pendingEntityName: pendingEntityName,
-        pendingEntityType: pendingEntityType,
       );
 
   factory ActionResult.needsInput({
@@ -167,16 +142,21 @@ class ActionResult {
   }) {
     final hasItems = items.isNotEmpty;
 
+    // Determine starting step — skip what AI already provided
     BillStep initialStep;
     if (!hasItems) {
       initialStep = BillStep.collectingItems;
     } else if (discountType == null) {
+      // AI didn't specify discount → ask user
       initialStep = BillStep.askingDiscount;
     } else if (taxType == null && taxRate == null) {
+      // Discount known, tax not → ask tax
       initialStep = BillStep.askingTax;
     } else if (paymentMode == null) {
+      // Tax known, payment not → ask payment
       initialStep = BillStep.askingPayment;
     } else {
+      // Everything provided → ready to create immediately
       initialStep = BillStep.ready;
     }
 
@@ -194,13 +174,17 @@ class ActionResult {
       initialBillState: BillCreationState(
         customerName: customerName,
         items: items,
-        discountType: discountType ?? 'none',
+        discountType:  discountType  ?? 'none',
         discountValue: discountValue ?? 0.0,
-        taxType: taxType ?? 'exclusive',
-        taxRate: taxRate ?? 0.0,
-        paymentMode: paymentMode,
-        paymentStatus: paymentStatus,
-        step: initialStep,
+        taxType:       taxType       ?? 'exclusive',
+        taxRate:       taxRate       ?? 0.0,
+        paymentMode:   paymentMode,
+        // Ensure udhar/credit → unpaid; cash/upi without explicit status → paid
+        paymentStatus: paymentStatus ??
+            (paymentMode == 'udhar' || paymentMode == 'credit' || paymentMode == 'cheque'
+                ? 'unpaid'
+                : paymentMode != null ? 'paid' : null),
+        step:          initialStep,
       ),
     );
   }
@@ -234,8 +218,7 @@ class ActionResult {
   factory ActionResult.stockZero({required List<String> itemNames}) =>
       ActionResult._(
         type: ActionResultType.stockZero,
-        reply:
-        '⚠️ ${itemNames.join(", ")} ka stock 0 hai.\n\nKya aap:\n1️⃣  Stock badhana chahte hain?\n2️⃣  Koi aur item choose karna chahte hain?',
+        reply: '⚠️ ${itemNames.join(", ")} ka stock 0 hai.\n\nKya aap:\n1️⃣  Stock badhana chahte hain?\n2️⃣  Koi aur item choose karna chahte hain?',
         stockIssue: StockIssue(
           type: StockIssueType.zero,
           itemName: itemNames.first,
@@ -250,8 +233,7 @@ class ActionResult {
   }) =>
       ActionResult._(
         type: ActionResultType.stockInsufficient,
-        reply:
-        '⚠️ $itemName ka stock sirf $available hai, aap $requested maang rahe hain.\n\nKya aap:\n1️⃣  Stock badhana chahte hain?\n2️⃣  Sirf $available piece ka bill banana chahte hain?\n3️⃣  Koi aur item?',
+        reply: '⚠️ $itemName ka stock sirf $available hai, aap $requested maang rahe hain.\n\nKya aap:\n1️⃣  Stock badhana chahte hain?\n2️⃣  Sirf $available piece ka bill banana chahte hain?\n3️⃣  Koi aur item?',
         stockIssue: StockIssue(
           type: StockIssueType.insufficient,
           itemName: itemName,
@@ -260,11 +242,17 @@ class ActionResult {
         ),
       );
 
-  factory ActionResult.subscriptionRequired() => ActionResult._(
-    type: ActionResultType.subscriptionRequired,
-    reply:
-    '🔒 Aapki free limit (10 bills) khatam ho gayi hai. Unlimited bills ke liye upgrade karo!',
-  );
+  factory ActionResult.subscriptionRequired() =>
+      ActionResult._(
+        type: ActionResultType.subscriptionRequired,
+        reply: '🔒 Aapki free limit (10 bills) khatam ho gayi hai. Unlimited bills ke liye upgrade karo!',
+      );
+
+  factory ActionResult.subscriptionLimitReached({required String reason}) =>
+      ActionResult._(
+        type: ActionResultType.subscriptionRequired,
+        reply: '🔒 $reason\n\nUpgrade karo aur sab kuch unlimited use karo!',
+      );
 
   factory ActionResult.error({required String message}) =>
       ActionResult._(type: ActionResultType.error, reply: message);
@@ -274,8 +262,6 @@ class ActionResult {
   bool get isCustomerNotFound => type == ActionResultType.customerNotFound;
   bool get isSupplierNotFound => type == ActionResultType.supplierNotFound;
   bool get hasStockIssue =>
-      type == ActionResultType.stockZero ||
-          type == ActionResultType.stockInsufficient;
-  bool get isSubscriptionRequired =>
-      type == ActionResultType.subscriptionRequired;
+      type == ActionResultType.stockZero || type == ActionResultType.stockInsufficient;
+  bool get isSubscriptionRequired => type == ActionResultType.subscriptionRequired;
 }
