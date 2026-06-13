@@ -5,6 +5,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import 'core/services/sync_service.dart';
+import 'core/services/outbox_sync_service.dart';
+import 'core/services/company_theme_manager.dart';
 import 'features/auth/domain/repositories/auth_repository.dart';
 import 'features/auth/presentation/bloc/auth_bloc.dart';
 import 'features/ai_chat/bloc/chat_bloc.dart';
@@ -23,6 +25,11 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Start background outbox sync (simple periodic uploader)
+  OutboxSyncService.instance.startPeriodicSync(periodSeconds: 30);
+  // load company theme
+  await CompanyThemeManager.instance.reload();
 
 
 
@@ -64,13 +71,18 @@ class MyApp extends StatelessWidget {
           minTextAdapt: true,
           splitScreenMode: true,
           builder: (context, child) {
-            return MaterialApp(
-              debugShowCheckedModeBanner: false,
-              theme: ThemeData(
-                splashColor: Colors.transparent,
-                highlightColor: Colors.transparent,
-              ),
-              home: const SplashScreen(),
+            return ValueListenableBuilder<ThemeData>(
+              valueListenable: CompanyThemeManager.instance.themeNotifier,
+              builder: (context, theme, _) {
+                return MaterialApp(
+                  debugShowCheckedModeBanner: false,
+                  theme: theme.copyWith(
+                    splashColor: Colors.transparent,
+                    highlightColor: Colors.transparent,
+                  ),
+                  home: const SplashScreen(),
+                );
+              },
             );
           },
         ),

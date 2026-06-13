@@ -4,6 +4,8 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:lottie/lottie.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_fonts.dart';
+import '../../../../core/constants/app_status_bar.dart';
 import '../../../../database/app_database.dart';
 import '../../model/item_model.dart';
 import '../bloc/item_bloc.dart';
@@ -22,7 +24,7 @@ class ItemScreenState extends State<ItemScreen> {
   @override
   void initState() {
     super.initState();
-    _itemBloc = ItemBloc(AppDatabase.instance)..add(FetchItems());
+    _itemBloc = ItemBloc()..add(FetchItems());
   }
 
   @override
@@ -280,73 +282,103 @@ class ItemScreenState extends State<ItemScreen> {
   Widget build(BuildContext context) {
     return BlocProvider.value(
       value: _itemBloc,
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        floatingActionButton: Padding(
-          padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
-          child: FloatingActionButton(
-            heroTag: 'fab_item',
-            onPressed: () async {
-              _showAddItemDialog(context);
-            },
-            backgroundColor: app_colors.table_header_bg,
-            child: Icon(Icons.add, color: app_colors.black),
+      child: AppStatusBarUtils(
+        color: app_colors.table_header_bg,
+        child: Scaffold(
+          backgroundColor: app_colors.white,
+          floatingActionButton: Padding(
+            padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
+            child: FloatingActionButton(
+              heroTag: 'fab_item',
+              onPressed: () async {
+                _showAddItemDialog(context);
+              },
+              backgroundColor: app_colors.table_header_bg,
+              child: Icon(Icons.add, color: app_colors.black),
+            ),
           ),
-        ),
-        body: BlocBuilder<ItemBloc, ItemState>(
-          builder: (context, state) {
-            if (state is ItemLoading) {
-              return const Center(child: CircularProgressIndicator());
-            } else if (state is ItemLoaded) {
-              final items = state.items;
-              if (items.isEmpty) {
+          body: BlocBuilder<ItemBloc, ItemState>(
+            builder: (context, state) {
+              if (state is ItemLoading) {
+                return const Center(child: CircularProgressIndicator());
+              } else if (state is ItemError) {
                 return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Lottie.asset(
-                        "assets/lottie/no_item.json",
-                        width: 200,
+                      const Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red,
                       ),
                       SizedBox(height: 16.h),
                       Text(
-                        "No Items Found",
-                        style: TextStyle(fontSize: 16.sp),
+                        'Error: ${state.message}',
+                        style: TextStyle(fontFamily: app_fonts.Medium, fontSize: 16.sp, color: Colors.grey),
+                        textAlign: TextAlign.center,
+                      ),
+                      SizedBox(height: 24.h),
+                      ElevatedButton(
+                        onPressed: refreshItems,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                );
+              } else if (state is ItemLoaded) {
+                final items = state.items;
+                if (items.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Lottie.asset(
+                          "assets/lottie/no_item.json",
+                          width: 200,
+                        ),
+                        SizedBox(height: 16.h),
+                        Text(
+                          "No Items Found",
+                          style: TextStyle(fontFamily: app_fonts.Medium, fontSize: 16.sp, color: Colors.grey),
+                        ),
+                        SizedBox(height: 24.h),
+                        ElevatedButton.icon(
+                          onPressed: () => _showAddItemDialog(context),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Item'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.only(top: 18, left: 8, right: 8, bottom: 80.h),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: items.length,
+                          itemBuilder: (context, index) {
+                            final item = items[index];
+                            return AppItemDesign(
+                              item: item,
+                              onItemDeleted: refreshItems,
+                              onItemUpdated: refreshItems,
+                            );
+                          },
+                        ),
                       ),
                     ],
                   ),
                 );
               }
-              return ListView.builder(
-                padding: EdgeInsets.only(bottom: 80.h),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return AppItemDesign(
-                    item: item,
-                    onItemDeleted: refreshItems, // Callback for delete
-                    onItemUpdated: refreshItems, // Callback for update
-
-                  );
-                },
-              );
-            } else if (state is ItemError) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('Error: ${state.message}'),
-                    SizedBox(height: 16.h),
-                    ElevatedButton(
-                      onPressed: refreshItems,
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              );
-            }
-            return const SizedBox.shrink();
-          },
+              return const SizedBox.shrink();
+            },
+          ),
         ),
       ),
     );

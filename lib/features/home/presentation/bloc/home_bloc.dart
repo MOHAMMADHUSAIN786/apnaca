@@ -110,22 +110,35 @@ class HomeBloc extends Bloc<HomeEvent, HomeState> {
         percentageChangePurchase = 100;
       }
 
+      // ─── EXPENSES ─────────────────────────────────────────────────
+      final totalExpense       = await _db.getTotalExpenseAllTime();
+      final expenseThisMonth   = await _db.getTotalExpenseThisMonth();
+      final expenseLastMonth   = await _db.getTotalExpenseLastMonth();
+
+      double percentageChangeExpense = 0;
+      if (expenseLastMonth > 0) {
+        percentageChangeExpense =
+            ((expenseThisMonth - expenseLastMonth) / expenseLastMonth) * 100;
+      } else if (expenseThisMonth > 0) {
+        percentageChangeExpense = 100;
+      }
+
       emit(
         HomeLoaded(
-          youWillReceive:          youWillReceive,
-          youWillPay:              youWillPay,
-          totalSale:               totalSale,
-          totalPurchase:           totalPurchase,
-          totalExpense:            0,
-          saleThisMonth:           saleThisMonth,
-          saleLastMonth:           saleLastMonth,
-          purchaseThisMonth:       purchaseThisMonth,
-          purchaseLastMonth:       purchaseLastMonth,
-          expenseThisMonth:        0,
-          expenseLastMonth:        0,
-          percentageChangeSale:    percentageChangeSale,
+          youWillReceive:           youWillReceive,
+          youWillPay:               youWillPay,
+          totalSale:                totalSale,
+          totalPurchase:            totalPurchase,
+          totalExpense:             totalExpense,
+          saleThisMonth:            saleThisMonth,
+          saleLastMonth:            saleLastMonth,
+          purchaseThisMonth:        purchaseThisMonth,
+          purchaseLastMonth:        purchaseLastMonth,
+          expenseThisMonth:         expenseThisMonth,
+          expenseLastMonth:         expenseLastMonth,
+          percentageChangeSale:     percentageChangeSale,
           percentageChangePurchase: percentageChangePurchase,
-          percentageChangeExpense: 0,
+          percentageChangeExpense:  percentageChangeExpense,
         ),
       );
 

@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../database/app_database.dart';
 import '../../customer/model/customer_model.dart';
 import '../../item/model/item_model.dart';
@@ -1226,9 +1227,13 @@ class ActionExecutor {
     double.parse((subtotal - billDiscount + gstAmount).toStringAsFixed(2));
     final billNumber = await _db.generateBillNumber();
 
+    final prefs = await SharedPreferences.getInstance();
+    final currentWhId = prefs.getInt('current_warehouse_id');
+
     final billId = await _db.insertSaleBill({
       'bill_number': billNumber,
       'customer_id': c.id,
+      if (currentWhId != null) 'warehouse_id': currentWhId,
       'bill_date': DateTime.now().toIso8601String().split('T')[0],
       'tax_type': state.taxType ?? 'exclusive',
       'discount_type': state.discountType ?? 'none',
@@ -1243,7 +1248,7 @@ class ActionExecutor {
 
     for (final line in billLines) {
       await _db.insertSaleBillItem({...line, 'bill_id': billId});
-      await _db.deductItemStock(line['item_id'] as int, line['qty'] as int);
+      // stock updated inside insertSaleBillItem if bill contains warehouse_id
     }
 
     // NOTE: incrementSaleBillCount is handled in AppDatabase.insertSaleBill()
@@ -1380,9 +1385,13 @@ class ActionExecutor {
     final totalAmount = double.parse((subtotal + totalTax).toStringAsFixed(2));
     final billNumber = await _db.generatePurchaseBillNumber();
 
+    final prefs2 = await SharedPreferences.getInstance();
+    final currentWhId2 = prefs2.getInt('current_warehouse_id');
+
     final billId = await _db.insertPurchaseBill({
       'bill_number': billNumber,
       'supplier_id': supplier.id,
+      if (currentWhId2 != null) 'warehouse_id': currentWhId2,
       'bill_date': DateTime.now().toIso8601String().split('T')[0],
       'subtotal': subtotal,
       'tax_amount': totalTax,
@@ -1394,7 +1403,7 @@ class ActionExecutor {
 
     for (final line in billLines) {
       await _db.insertPurchaseBillItem({...line, 'bill_id': billId});
-      await _db.addItemStock(line['item_id'] as int, line['qty'] as int);
+      // stock updated inside insertPurchaseBillItem if bill contains warehouse_id
     }
 
     // NOTE: incrementPurchaseBillCount is handled in AppDatabase.insertPurchaseBill()

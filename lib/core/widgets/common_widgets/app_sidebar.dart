@@ -11,7 +11,24 @@ import '../../../features/feedback/feedback_screen.dart';
 import '../../../features/profile/presentation/pages/profile_screen.dart';
 import '../../../features/setting/presentation/pages/setting_screen.dart';
 import '../../../features/subscription/presentation/pages/subscription_screen.dart';
-import '../../../features/warehouse/presentation/pages/warehouse_screen.dart';
+import '../../../features/warehouse/presentation/pages/warehouse_list_screen.dart';
+import '../../../features/company/presentation/pages/company_switcher.dart';
+import '../../../features/expense/presentation/pages/expense_screen.dart';
+import '../../../features/ledger/presentation/pages/ledger_screen.dart';
+import '../../../features/quotation/presentation/pages/quotation_screen.dart';
+import '../../../features/manufacturing/presentation/pages/bom_list_screen.dart';
+import '../../../features/staff/presentation/pages/staff_list_screen.dart';
+import '../../../features/bank/presentation/pages/bank_account_list_screen.dart';
+import '../../../features/challan/presentation/pages/challan_list_screen.dart';
+import '../../../features/pos/presentation/pages/pos_screen.dart';
+import '../../../features/repairs/presentation/pages/repair_job_list_screen.dart';
+import '../../../features/ecommerce/presentation/pages/ecommerce_dashboard_screen.dart';
+import '../../../features/assets_management/presentation/pages/assets_list_screen.dart';
+import '../../../features/gst/presentation/pages/gst_dashboard_screen.dart';
+import '../../../features/tally/presentation/pages/tally_export_screen.dart';
+import '../../../features/currency/presentation/pages/currency_settings_screen.dart';
+import '../../../features/franchise/presentation/pages/franchise_dashboard_screen.dart';
+import '../../../features/crm/presentation/pages/crm_dashboard_screen.dart';
 import '../../constants/app_colors.dart';
 import '../../constants/app_fonts.dart';
 import '../../services/sync_service.dart';
@@ -242,17 +259,221 @@ class _AppSideBarState extends State<AppSideBar> {
                     },
                   ),
 
-                  // // Warehouse
-                  // _buildTile(
-                  //   icon: Icons.warehouse_outlined,
-                  //   label: "Warehouse",
-                  //   onTap: () {
-                  //     Navigator.push(
-                  //       context,
-                  //       MaterialPageRoute(builder: (_) => const WarehouseScreen()),
-                  //     );
-                  //   },
-                  // ),
+                  // POS
+                  _buildTile(
+                    icon: Icons.point_of_sale,
+                    label: "Point of Sale (POS)",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PosScreen()),
+                      );
+                    },
+                  ),
+
+                  // Ledger / Khata Book
+                  _buildTile(
+                    icon: Icons.book_outlined,
+                    label: "Party Ledger",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const LedgerScreen()),
+                      );
+                    },
+                  ),
+
+                  // Quotations
+                  _buildTile(
+                    icon: Icons.request_quote_outlined,
+                    label: "Quotations",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const QuotationScreen()),
+                      );
+                    },
+                  ),
+
+                  // Expense
+                  _buildTile(
+                    icon: Icons.receipt_long_outlined,
+                    label: "Expenses",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ExpenseScreen()),
+                      );
+                    },
+                  ),
+
+                  // Manufacturing / BOM
+                  _buildTile(
+                    icon: Icons.precision_manufacturing_outlined,
+                    label: "Manufacturing",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const BomListScreen()),
+                      );
+                    },
+                  ),
+
+                  // Delivery Challan
+                  _buildTile(
+                    icon: Icons.local_shipping_outlined,
+                    label: "Delivery Challan",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ChallanListScreen()),
+                      );
+                    },
+                  ),
+
+                  // Repairs & Service
+                  _buildTile(
+                    icon: Icons.build_circle_outlined,
+                    label: "Repairs & Service",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const RepairJobListScreen()),
+                      );
+                    },
+                  ),
+
+                  // E-Commerce
+                  _buildTile(
+                    icon: Icons.shopping_cart_outlined,
+                    label: "E-Commerce",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const EcommerceDashboardScreen()),
+                      );
+                    },
+                  ),
+
+                  // Assets Management
+                  _buildTile(
+                    icon: Icons.inventory_2_outlined,
+                    label: "Assets Management",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AssetsListScreen()),
+                      );
+                    },
+                  ),
+
+                  // GST Compliance
+                  _buildTile(
+                    icon: Icons.receipt_long,
+                    label: "GST Returns & E-Invoice",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const GstDashboardScreen()),
+                      );
+                    },
+                  ),
+
+                  // Tally Export
+                  _buildTile(
+                    icon: Icons.upload_file,
+                    label: "Export to Tally",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const TallyExportScreen()),
+                      );
+                    },
+                  ),
+
+                  // Franchise Management
+                  _buildTile(
+                    icon: Icons.storefront_outlined,
+                    label: "Franchise Management",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const FranchiseDashboardScreen()),
+                      );
+                    },
+                  ),
+
+                  // CRM & Leads
+                  _buildTile(
+                    icon: Icons.support_agent,
+                    label: "CRM & Leads",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CrmDashboardScreen()),
+                      );
+                    },
+                  ),
+
+                  // Multi-Currency
+                  _buildTile(
+                    icon: Icons.currency_exchange,
+                    label: "Multi-Currency",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CurrencySettingsScreen()),
+                      );
+                    },
+                  ),
+
+                  // Bank & Cash
+                  _buildTile(
+                    icon: Icons.account_balance_outlined,
+                    label: "Bank Accounts",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const BankAccountListScreen()),
+                      );
+                    },
+                  ),
+
+                  // Staff Management
+                  _buildTile(
+                    icon: Icons.badge_outlined,
+                    label: "Staff Attendance",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const StaffListScreen()),
+                      );
+                    },
+                  ),
+
+                  // Warehouse
+                  _buildTile(
+                    icon: Icons.warehouse_outlined,
+                    label: "Warehouses",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const WarehouseListScreen()),
+                      );
+                    },
+                  ),
+
+                  // Companies
+                  _buildTile(
+                    icon: Icons.business_outlined,
+                    label: "Switch Company",
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CompanySwitcher()),
+                      );
+                    },
+                  ),
 
                   // Subscription
                   _buildTile(

@@ -1,0 +1,34 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Prepare environment for native sqlite (optional)
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y libsqlite3-dev || true
+      - name: Enable sqflite_common_ffi for tests
+        run: |
+          echo "Using sqflite_common_ffi in tests"
+      - name: Run unit & integration tests
+        env:
+          FLUTTER_TEST_TIMEOUT: 300
+        run: |
+          # Ensure packages
+          flutter pub get
+          # Run the unit and integration tests (including network printer integration)
+          flutter test --coverage

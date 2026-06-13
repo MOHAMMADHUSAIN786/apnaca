@@ -4,6 +4,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_fonts.dart';
 import '../../../../database/app_database.dart';
 import '../../model/item_model.dart';
+import '../pages/item_edit_screen.dart';
 
 class AppItemDesign extends StatelessWidget {
   final ItemModel item;
@@ -89,228 +90,7 @@ class AppItemDesign extends StatelessWidget {
     }
   }
 
-  Future<void> _editItem(BuildContext context) async {
-    final nameController = TextEditingController(text: item.name);
-    final qtyController =
-    TextEditingController(text: item.qty?.toString() ?? "");
-    final priceController =
-    TextEditingController(text: item.price?.toString() ?? "");
-    final hsnController =
-    TextEditingController(text: item.hsnCode ?? "");
-
-    final formKey = GlobalKey<FormState>();
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          child: Container(
-            padding: EdgeInsets.all(18.w),
-            decoration: BoxDecoration(
-              color: app_colors.Dbackgroun_color,
-              borderRadius: BorderRadius.circular(18.r),
-              border: Border.all(
-                color: app_colors.Dborder_color,
-              ),
-            ),
-            child: SingleChildScrollView(
-              child: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-
-                    // Header
-                    Row(
-                      children: [
-                        Container(
-                          padding: EdgeInsets.all(10.w),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.shade50,
-                            borderRadius: BorderRadius.circular(12.r),
-                          ),
-                          child: Icon(
-                            Icons.edit_note_rounded,
-                            color: app_colors.black,
-                          ),
-                        ),
-
-                        SizedBox(width: 12.w),
-
-                        Expanded(
-                          child: Text(
-                            "Update Item",
-                            style: TextStyle(
-                              fontSize: 18.sp,
-                              fontFamily: app_fonts.Medium,
-                              color: app_colors.black,
-                            ),
-                          ),
-                        ),
-
-                        InkWell(
-                          onTap: () => Navigator.pop(context),
-                          child: Icon(Icons.close),
-                        )
-                      ],
-                    ),
-
-                    SizedBox(height: 22.h),
-
-                    // Name
-                    _buildField(
-                      controller: nameController,
-                      label: "Item Name",
-                      icon: Icons.inventory_2_outlined,
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return "Enter item name";
-                        }
-                        return null;
-                      },
-                    ),
-
-                    SizedBox(height: 14.h),
-
-                    // Qty
-                    _buildField(
-                      controller: qtyController,
-                      label: "Quantity",
-                      icon: Icons.numbers,
-                      keyboardType: TextInputType.number,
-                    ),
-
-                    SizedBox(height: 14.h),
-
-                    // Price
-                    _buildField(
-                      controller: priceController,
-                      label: "Price",
-                      icon: Icons.currency_rupee,
-                      keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                    ),
-
-                    SizedBox(height: 14.h),
-
-                    // HSN
-                    _buildField(
-                      controller: hsnController,
-                      label: "HSN Code",
-                      icon: Icons.qr_code,
-                    ),
-
-                    SizedBox(height: 24.h),
-
-                    Row(
-                      children: [
-
-                        // Cancel
-                        Expanded(
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(vertical: 14.h),
-                              side: BorderSide(
-                                color: app_colors.Dborder_color,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.r),
-                              ),
-                            ),
-                            onPressed: () {
-                              Navigator.pop(context);
-                            },
-                            child: Text(
-                              "Cancel",
-                              style: TextStyle(
-                                color: app_colors.black,
-                                fontSize: 14.sp,
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        SizedBox(width: 12.w),
-
-                        // Update
-                        Expanded(
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: app_colors.table_header_bg,
-                              elevation: 0,
-                              padding: EdgeInsets.symmetric(vertical: 14.h),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.r),
-                              ),
-                            ),
-                            onPressed: () async {
-
-                              if (!formKey.currentState!.validate()) return;
-
-                              try {
-
-                                final updatedItem = ItemModel(
-                                  id: item.id,
-                                  name: nameController.text.trim(),
-                                  qty: int.tryParse(qtyController.text.trim()) ?? 0,
-                                  price: double.tryParse(
-                                      priceController.text.trim()) ??
-                                      0,
-                                  hsnCode: hsnController.text.trim().isEmpty
-                                      ? null
-                                      : hsnController.text.trim(),
-                                );
-
-                                await AppDatabase.instance
-                                    .updateItem(updatedItem);
-
-                                Navigator.pop(context);
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      "Item updated successfully",
-                                    ),
-                                  ),
-                                );
-
-                                if (onItemUpdated != null) {
-                                  onItemUpdated!();
-                                }
-
-                              } catch (e) {
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text("Failed: $e"),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            },
-                            child: Text(
-                              "Update",
-                              style: TextStyle(
-                                color: app_colors.black,
-                                fontSize: 14.sp,
-                                fontFamily: app_fonts.Medium,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -391,9 +171,10 @@ class AppItemDesign extends StatelessWidget {
             // 3-dot menu
             PopupMenuButton<String>(
               color: app_colors.white,
-              onSelected: (value) {
+              onSelected: (value) async {
                 if (value == 'edit') {
-                  _editItem(context);
+                  final res = await Navigator.push(context, MaterialPageRoute(builder: (_) => ItemEditScreen(item: item)));
+                  if (res == true && onItemUpdated != null) onItemUpdated!();
                 } else if (value == 'delete') {
                   _deleteItem(context);
                 }

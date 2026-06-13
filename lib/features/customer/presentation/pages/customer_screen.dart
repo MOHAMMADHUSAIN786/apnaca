@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_status_bar.dart';
 import '../../../../database/app_database.dart';
 import '../../../item/model/item_model.dart';
 import '../../model/customer_model.dart';
@@ -352,32 +353,35 @@ class _CustomerScreenState extends State<CustomerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: app_colors.table_header_bg,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: app_colors.title),
-          onPressed: () => Navigator.pop(context, true),
-        ),
-        title: Text(
-          'Customers',
-          style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600, color: app_colors.title),
-        ),
-      ),
-      floatingActionButton: Padding(
-        padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
-        child: FloatingActionButton(
-          heroTag: 'fab_item',
-          onPressed: () async {
-            _showAddCustomerDialog(context);
-          },
+    return AppStatusBarUtils(
+      color: app_colors.table_header_bg,
+      child: Scaffold(
+        backgroundColor: app_colors.white,
+        appBar: AppBar(
           backgroundColor: app_colors.table_header_bg,
-          child: Icon(Icons.add, color: app_colors.black),
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, color: app_colors.title),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+          title: Text(
+            'Customers',
+            style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600, color: app_colors.title),
+          ),
         ),
+        floatingActionButton: Padding(
+          padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
+          child: FloatingActionButton(
+            heroTag: 'fab_item',
+            onPressed: () async {
+              _showAddCustomerDialog(context);
+            },
+            backgroundColor: app_colors.table_header_bg,
+            child: Icon(Icons.add, color: app_colors.black),
+          ),
+        ),
+        body: _buildBody(),
       ),
-      body: _buildBody(),
     );
   }
 
@@ -385,11 +389,18 @@ class _CustomerScreenState extends State<CustomerScreen> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
+
     if (_error != null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Colors.red,
+            ),
+            SizedBox(height: 16.h),
             Text('Error: $_error'),
             SizedBox(height: 16.h),
             ElevatedButton(onPressed: _fetchCustomers, child: const Text('Retry')),
@@ -397,6 +408,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
       );
     }
+
     if (_customers.isEmpty) {
       return Center(
         child: Column(
@@ -409,17 +421,26 @@ class _CustomerScreenState extends State<CustomerScreen> {
         ),
       );
     }
-    return ListView.builder(
-      padding: EdgeInsets.only(bottom: 80.h),
-      itemCount: _customers.length,
-      itemBuilder: (context, index) {
-        final customer = _customers[index];
-        return AppCustomerDesign(
-          customer: customer,
-          onCustomerDeleted: _fetchCustomers,
-          onCustomerUpdated: _fetchCustomers,
-        );
-      },
+
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.only(top: 18, left: 8, right: 8, bottom: 80.h),
+            itemCount: _customers.length,
+            itemBuilder: (context, index) {
+              final customer = _customers[index];
+              return AppCustomerDesign(
+                customer: customer,
+                onCustomerDeleted: _fetchCustomers,
+                onCustomerUpdated: _fetchCustomers,
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }

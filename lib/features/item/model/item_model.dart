@@ -4,6 +4,7 @@ class ItemModel {
   final int? qty;
   final double? price;
   final String? hsnCode;
+  final String? barcode;
 
   const ItemModel({
     this.id,
@@ -11,6 +12,7 @@ class ItemModel {
     this.qty,
     this.price,
     this.hsnCode,
+    this.barcode,
   });
 
   factory ItemModel.fromMap(Map<String, dynamic> map) {
@@ -20,6 +22,7 @@ class ItemModel {
       qty: map['qty'] as int?,
       price: map['price'] as double?,
       hsnCode: map['hsn_code'] as String?,
+      barcode: map['barcode'] as String?,
     );
   }
 
@@ -30,6 +33,7 @@ class ItemModel {
       'qty': qty,
       'price': price,
       'hsn_code': hsnCode,
+      'barcode': barcode,
     };
   }
 
@@ -39,6 +43,7 @@ class ItemModel {
     int? qty,
     double? price,
     String? hsnCode,
+    String? barcode,
   }) {
     return ItemModel(
       id: id ?? this.id,
@@ -46,6 +51,7 @@ class ItemModel {
       qty: qty ?? this.qty,
       price: price ?? this.price,
       hsnCode: hsnCode ?? this.hsnCode,
+      barcode: barcode ?? this.barcode,
     );
   }
 }

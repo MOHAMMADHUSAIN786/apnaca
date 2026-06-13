@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_status_bar.dart';
 import '../../../../database/app_database.dart';
 import '../../model/supplier_model.dart';
 import '../widgets/app_supplier_design.dart';
@@ -358,55 +359,59 @@ class SupplierScreenState extends State<SupplierScreen> {
   @override
   Widget build(BuildContext context) {
 
-    return Scaffold(
-      backgroundColor: Colors.white,
+    return AppStatusBarUtils(
+      color: app_colors.table_header_bg,
 
-      appBar: AppBar(
-        backgroundColor: app_colors.table_header_bg,
-        elevation: 0,
+      child: Scaffold(
+        backgroundColor: app_colors.white,
 
-        leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_rounded,
-            color: app_colors.title,
+        appBar: AppBar(
+          backgroundColor: app_colors.table_header_bg,
+          elevation: 0,
+
+          leading: IconButton(
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+              color: app_colors.title,
+            ),
+            onPressed: () => Navigator.pop(context, true),
           ),
-          onPressed: () => Navigator.pop(context, true),
+
+          title: Text(
+            'Suppliers',
+            style: TextStyle(
+              fontSize: 16.sp,
+              fontWeight: FontWeight.w600,
+              color: app_colors.title,
+            ),
+          ),
         ),
 
-        title: Text(
-          'Suppliers',
-          style: TextStyle(
-            fontSize: 16.sp,
-            fontWeight: FontWeight.w600,
-            color: app_colors.title,
+        floatingActionButton: Padding(
+          padding: EdgeInsets.only(
+            bottom: 18.h,
+            right: 18.w,
+          ),
+
+          child: FloatingActionButton(
+            heroTag: 'fab_supplier',
+
+            onPressed: () async {
+              _showAddSupplierDialog(context);
+            },
+
+            backgroundColor:
+            app_colors.table_header_bg,
+
+            child: Icon(
+              Icons.add,
+              color: app_colors.black,
+            ),
           ),
         ),
+
+        body: _buildBody(),
       ),
-
-      floatingActionButton: Padding(
-        padding: EdgeInsets.only(
-          bottom: 18.h,
-          right: 18.w,
-        ),
-
-        child: FloatingActionButton(
-          heroTag: 'fab_supplier',
-
-          onPressed: () async {
-            _showAddSupplierDialog(context);
-          },
-
-          backgroundColor:
-          app_colors.table_header_bg,
-
-          child: Icon(
-            Icons.add,
-            color: app_colors.black,
-          ),
-        ),
-      ),
-
-      body: _buildBody(),
     );
   }
 
@@ -424,6 +429,14 @@ class SupplierScreenState extends State<SupplierScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+
+            const Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Colors.red,
+            ),
+
+            SizedBox(height: 16.h),
 
             Text('Error: $_error'),
 
@@ -467,21 +480,29 @@ class SupplierScreenState extends State<SupplierScreen> {
       );
     }
 
-    return ListView.builder(
-      padding: EdgeInsets.only(bottom: 80.h),
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.only(top: 18, left: 8, right: 8, bottom: 80.h),
 
-      itemCount: _suppliers.length,
+            itemCount: _suppliers.length,
 
-      itemBuilder: (context, index) {
+            itemBuilder: (context, index) {
 
-        final supplier = _suppliers[index];
+              final supplier = _suppliers[index];
 
-        return AppSupplierDesign(
-          supplier: supplier,
-          onSupplierDeleted: _fetchSuppliers,
-          onSupplierUpdated: _fetchSuppliers,
-        );
-      },
+              return AppSupplierDesign(
+                supplier: supplier,
+                onSupplierDeleted: _fetchSuppliers,
+                onSupplierUpdated: _fetchSuppliers,
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }
