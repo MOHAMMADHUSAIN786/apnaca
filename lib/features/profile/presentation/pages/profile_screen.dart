@@ -9,6 +9,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_fonts.dart';
+import '../../../../core/services/permission_service.dart';
+import '../../../../database/app_database.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -19,6 +21,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _userData;
+  String _companyName = ''; // active company name
   bool _isLoading = true;
   bool _isSaving = false;
   String? _error;
@@ -67,12 +70,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _nameController.text =
           "${data['first_name'] ?? ''} ${data['last_name'] ?? ''}".trim();
 
+      // ── Company name: owner ki active company / team member ki assigned company ──
+      await _fetchCompanyName(user.uid);
+
       // Fetch branding URLs
       await _fetchBrandingUrls(user.uid);
 
       setState(() { _isLoading = false; });
     } catch (e) {
       setState(() { _error = e.toString(); _isLoading = false; });
+    }
+  }
+
+  Future<void> _fetchCompanyName(String uid) async {
+    try {
+      final perm = PermissionService.instance;
+
+      if (perm.isTeamMember && perm.teamAccess != null) {
+        // Team member — fetch owner ki company name from Firestore
+        final companyDoc = await FirebaseFirestore.instance
+            .collection('companies')
+            .doc(perm.teamAccess!.companyId)
+            .get();
+        if (companyDoc.exists) {
+          _companyName = companyDoc.data()?['name'] ?? '';
+        }
+      } else {
+        // Owner — fetch active company name
+        final activeId = AppDatabase.activeCompanyId;
+        if (activeId != null) {
+          final companyDoc = await FirebaseFirestore.instance
+              .collection('companies')
+              .doc(activeId)
+              .get();
+          if (companyDoc.exists) {
+            _companyName = companyDoc.data()?['name'] ?? '';
+          }
+        }
+        // Fallback to user's default company_name
+        if (_companyName.isEmpty) {
+          _companyName = _userData?['company_name'] ?? '';
+        }
+      }
+    } catch (_) {
+      // Fallback
+      _companyName = _userData?['company_name'] ?? '';
     }
   }
 
@@ -678,7 +720,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
               _userData?['username'] ?? '-'),
           SizedBox(height: 10.h),
           _infoRow(Icons.business_outlined, "Company",
-              _userData?['company_name'] ?? '-'),
+              _companyName.isNotEmpty ? _companyName : (_userData?['company_name'] ?? '-')),
+
+          // Show role badge for team members
+          if (PermissionService.instance.isTeamMember) ...[
+            SizedBox(height: 10.h),
+            _infoRow(
+              PermissionService.instance.teamAccess?.isViewer == true
+                  ? Icons.visibility_outlined
+                  : Icons.edit_outlined,
+              'Role',
+              PermissionService.instance.teamAccess?.isViewer == true
+                  ? 'Viewer (View Only)'
+                  : 'Editor (Full Access)',
+            ),
+          ],
 
           SizedBox(height: 24.h),
 

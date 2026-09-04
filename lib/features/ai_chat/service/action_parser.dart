@@ -95,6 +95,9 @@ class ActionParser {
     if (_has(l, ['low stock', 'kam stock', 'khatam'])) {
       return ParsedAction(type: AiActionType.getAnalytics, data: {'period': 'low_stock'}, reply: 'Low stock items:');
     }
+    if (_has(l, ['inventory value', 'inventory valuation', 'stock value', 'stock valuation', 'inventory kitna'])) {
+      return ParsedAction(type: AiActionType.getAnalytics, data: {'period': 'inventory_valuation'}, reply: 'Inventory valuation:');
+    }
     // "unpaid dikhao" = analytics; "unpaid paid karna" = ask for bill number
     if (_has(l, ['unpaid', 'udhaar', 'baaki']) && !_has(l, ['paid karna', 'paid karo', 'paid mark'])) {
       return ParsedAction(type: AiActionType.getAnalytics, data: {'period': 'unpaid'}, reply: 'Unpaid bills:');
@@ -131,6 +134,10 @@ class ActionParser {
       case 'list_items':                  return AiActionType.listItems;
       case 'show_item_detail':            return AiActionType.showItemDetail;
       case 'show_item_transactions':      return AiActionType.showItemTransactions;
+      case 'stock_in':                    return AiActionType.stockIn;
+      case 'stock_out':                   return AiActionType.stockOut;
+      case 'stock_adjustment':            return AiActionType.stockAdjustment;
+      case 'show_stock_history':          return AiActionType.showStockHistory;
       case 'create_customer':             return AiActionType.createCustomer;
       case 'update_customer':             return AiActionType.updateCustomer;
       case 'delete_customer':             return AiActionType.deleteCustomer;

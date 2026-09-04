@@ -367,38 +367,19 @@ class SubscriptionService {
   }
 
   // ─────────────────────────────────────────────
-  //  ACTIVATE (called from SubscriptionScreen after payment)
+  //  ACTIVATE — DEPRECATED
+  //  Plan activation now happens server-side via the Razorpay webhook
+  //  (Agent Gateway). Firestore security rules deny client writes to plan
+  //  fields. This is kept as a no-op so any stray caller just refreshes.
   // ─────────────────────────────────────────────
+  @Deprecated('Plan is activated by the server webhook. Use forceRefresh().')
   Future<void> activateSubscription({
     required SubscriptionPlan plan,
     required BillingCycle billingCycle,
     required String razorpayPaymentId,
     required String razorpayOrderId,
   }) async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) return;
-
-    final now = DateTime.now();
-    final DateTime expiry;
-
-    if (billingCycle == BillingCycle.yearly) {
-      expiry = DateTime(now.year + 1, now.month, now.day);
-    } else {
-      expiry = DateTime(now.year, now.month + 1, now.day);
-    }
-
-    await _firestore.collection('subscriptions').doc(uid).set({
-      'plan': plan.name,
-      'billing_cycle': billingCycle.name,
-      'expiry_date': expiry.toIso8601String(),
-      'razorpay_payment_id': razorpayPaymentId,
-      'razorpay_order_id': razorpayOrderId,
-      'activated_at': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-
-    _cached = (_cached ?? const SubscriptionModel(plan: SubscriptionPlan.free))
-        .copyWith(plan: plan, expiryDate: expiry, billingCycle: billingCycle);
-    _lastFetchTime = DateTime.now();
+    await forceRefresh();
   }
 
   // Cache invalidate karo (logout pe)

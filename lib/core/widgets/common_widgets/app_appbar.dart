@@ -11,7 +11,6 @@ class AppAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool showSidebarIcon;
   final VoidCallback? onSidebarTap;
   final bool backbutton;
-  final VoidCallback? onChatTap;
 
   const AppAppBar({
     Key? key,
@@ -19,7 +18,6 @@ class AppAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.showSidebarIcon = false,
     this.onSidebarTap,
     this.backbutton = false,
-    this.onChatTap, // 👈 add this
   }) : super(key: key);
 
   @override
@@ -52,13 +50,6 @@ class AppAppBar extends StatelessWidget implements PreferredSizeWidget {
         onPressed: () => Get.back(),
       )
           : null,
-      actions: [
-        if (onChatTap != null)
-          IconButton(
-            icon: const Icon(Icons.chat_bubble_outline, color: Colors.black),
-            onPressed: onChatTap,
-          ),
-      ],
       centerTitle: false,
     );
   }

@@ -1,12 +1,12 @@
 // lib/features/subscription/presentation/pages/subscription_screen.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../model/subscription_model.dart';
+import '../../service/billing_client.dart';
 import '../../service/subscription_service.dart';
 
 class SubscriptionScreen extends StatefulWidget {
@@ -29,12 +29,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   bool _paying = false;
 
   SubscriptionPlan? _pendingPlan;
-  BillingCycle? _pendingCycle;
 
   // Billing toggle — default monthly
   BillingCycle _selectedCycle = BillingCycle.monthly;
 
   late final Razorpay _razorpay;
+  final BillingClient _billing = BillingClient();
 
   @override
   void initState() {
@@ -67,75 +67,74 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     }
   }
 
-  int _getAmountForPlan(SubscriptionPlan plan, BillingCycle cycle) {
-    if (plan == SubscriptionPlan.silver) {
-      return cycle == BillingCycle.yearly
-          ? SubscriptionModel.silverYearlyPriceRs
-          : SubscriptionModel.silverMonthlyPriceRs;
-    }
-    // gold
-    return cycle == BillingCycle.yearly
-        ? SubscriptionModel.goldYearlyPriceRs
-        : SubscriptionModel.goldMonthlyPriceRs;
+  void _snack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? app_colors.c_danger : const Color(0xFF22C55E),
+    ));
   }
 
   Future<void> _startPayment(SubscriptionPlan plan, BillingCycle cycle) async {
+    if (!_billing.available) {
+      _snack('Payment abhi available nahi hai. Thodi der baad try karein.',
+          isError: true);
+      return;
+    }
+
     setState(() {
       _paying = true;
       _pendingPlan = plan;
-      _pendingCycle = cycle;
     });
 
-    final amountPaise = _getAmountForPlan(plan, cycle) * 100;
-    final apiKey = dotenv.env['TEST_RAZORPAY_API_KEY'] ?? '';
-
+    final planStr = plan == SubscriptionPlan.silver ? 'silver' : 'gold';
+    final cycleStr = cycle == BillingCycle.yearly ? 'yearly' : 'monthly';
     final planLabel = plan == SubscriptionPlan.silver ? 'Silver' : 'Gold';
     final cycleLabel = cycle == BillingCycle.yearly ? 'Yearly' : 'Monthly';
 
-    final options = {
-      'key': apiKey,
-      'amount': amountPaise,
-      'name': 'ApnaCA',
-      'description': '$planLabel Plan - $cycleLabel',
-      'prefill': {},
-      'theme': {'color': '#2490EF'},
-    };
-
     try {
-      _razorpay.open(options);
+      // Server creates the order (computes the amount, holds the secret).
+      final order = await _billing.createOrder(plan: planStr, cycle: cycleStr);
+      _razorpay.open({
+        'key': order.keyId,
+        'order_id': order.orderId,
+        'amount': order.amountPaise,
+        'currency': order.currency,
+        'name': 'ApnaCA',
+        'description': '$planLabel Plan - $cycleLabel',
+        'prefill': <String, dynamic>{},
+        'theme': {'color': '#2490EF'},
+      });
     } catch (e) {
       setState(() => _paying = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Unable to open payment gateway: $e'),
-            backgroundColor: app_colors.c_danger,
-          ),
-        );
-      }
+      _snack('Payment start nahi ho paya. Dobara try karein.', isError: true);
     }
   }
 
   void _handlePaymentSuccess(PaymentSuccessResponse response) async {
-    if (_pendingPlan != null && _pendingCycle != null) {
-      await SubscriptionService.instance.activateSubscription(
-        plan: _pendingPlan!,
-        billingCycle: _pendingCycle!,
-        razorpayPaymentId: response.paymentId ?? '',
-        razorpayOrderId: response.orderId ?? '',
-      );
+    // The plan is activated by the server's signature-verified webhook — the
+    // client no longer writes it. Poll until the gateway reports the new plan.
+    final targetPlan = _pendingPlan == SubscriptionPlan.gold ? 'gold' : 'silver';
+
+    bool activated = false;
+    for (var i = 0; i < 8 && !activated; i++) {
+      await Future.delayed(Duration(seconds: i == 0 ? 2 : 3));
+      try {
+        final sub = await _billing.fetchSubscription();
+        if (sub.plan == targetPlan && sub.isActive) activated = true;
+      } catch (_) {}
     }
 
-    setState(() => _paying = false);
-    await _loadSubscription();
+    await SubscriptionService.instance.forceRefresh();
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🎉 Subscription activated successfully!'),
-        backgroundColor: Color(0xFF22C55E),
-      ),
-    );
+    setState(() => _paying = false);
+    await _loadSubscription();
+    if (!mounted) return;
+
+    _snack(activated
+        ? '🎉 Subscription activate ho gaya!'
+        : '✅ Payment mil gaya. Plan thodi der mein activate ho jayega.');
     Navigator.of(context).pop(true);
   }
 
@@ -143,7 +142,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     setState(() {
       _paying = false;
       _pendingPlan = null;
-      _pendingCycle = null;
     });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

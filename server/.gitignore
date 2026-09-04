@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+service-account.json
+*.log
+
+# drizzle/ (migrations) IS committed — it's the DB schema source of truth.

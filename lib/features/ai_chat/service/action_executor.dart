@@ -159,6 +159,103 @@ class ActionExecutor {
         );
 
     // ══════════════════════════════════════════════════════
+    //  INVENTORY MANAGEMENT
+    // ══════════════════════════════════════════════════════
+
+      case AiActionType.stockIn: {
+        final item = await _resolveItem(action.data);
+        if (item == null) return ActionResult.error(message: 'Konsa item ka stock badhana hai? Item ka naam batao.');
+        final qty = _toInt(action.data['qty']);
+        if (qty == null || qty <= 0) {
+          return ActionResult.needsInput(
+              question: '"${item.name}" mein kitna stock add karna hai?', field: 'qty');
+        }
+        final reason = action.data['reason'] as String?;
+        final updated = await _db.stockIn(item.id!, qty, reason: reason);
+        return ActionResult.success(
+          reply: action.reply.isNotEmpty
+              ? action.reply
+              : '✅ "${item.name}" mein $qty units add ho gaye. Naya stock: ${updated?.qty ?? 0}',
+          detailCard: {
+            'type': 'item',
+            'Name': item.name,
+            'Added': '+$qty',
+            'New Stock': '${updated?.qty ?? 0}',
+          },
+        );
+      }
+
+      case AiActionType.stockOut: {
+        final item = await _resolveItem(action.data);
+        if (item == null) return ActionResult.error(message: 'Konsa item ka stock kam karna hai? Item ka naam batao.');
+        final qty = _toInt(action.data['qty']);
+        if (qty == null || qty <= 0) {
+          return ActionResult.needsInput(
+              question: '"${item.name}" se kitna stock kam karna hai?', field: 'qty');
+        }
+        final available = item.qty ?? 0;
+        if (qty > available) {
+          return ActionResult.error(
+              message: '⚠️ "${item.name}" ka stock sirf $available hai, $qty kam nahi kar sakte.');
+        }
+        final reason = action.data['reason'] as String?;
+        final updated = await _db.stockOut(item.id!, qty, reason: reason);
+        return ActionResult.success(
+          reply: action.reply.isNotEmpty
+              ? action.reply
+              : '✅ "${item.name}" se $qty units kam ho gaye. Naya stock: ${updated?.qty ?? 0}',
+          detailCard: {
+            'type': 'item',
+            'Name': item.name,
+            'Removed': '-$qty',
+            'New Stock': '${updated?.qty ?? 0}',
+          },
+        );
+      }
+
+      case AiActionType.stockAdjustment: {
+        final item = await _resolveItem(action.data);
+        if (item == null) return ActionResult.error(message: 'Konsa item ka stock adjust karna hai? Item ka naam batao.');
+        final qty = _toInt(action.data['qty']);
+        if (qty == null || qty < 0) {
+          return ActionResult.needsInput(
+              question: '"${item.name}" ka actual/naya stock kitna hai?', field: 'qty');
+        }
+        final reason = action.data['reason'] as String?;
+        final updated = await _db.adjustStock(item.id!, qty, reason: reason);
+        return ActionResult.success(
+          reply: action.reply.isNotEmpty
+              ? action.reply
+              : '✅ "${item.name}" ka stock $qty set ho gaya.',
+          detailCard: {
+            'type': 'item',
+            'Name': item.name,
+            'New Stock': '${updated?.qty ?? 0}',
+          },
+        );
+      }
+
+      case AiActionType.showStockHistory: {
+        final item = await _resolveItem(action.data);
+        if (item == null) return ActionResult.error(message: 'Konsa item ka stock history dekhni hai? Item ka naam batao.');
+        final history = await _db.getStockHistory(item.id!, limit: 15);
+        if (history.isEmpty) {
+          return ActionResult.success(reply: '"${item.name}" ka koi stock history nahi mila abhi.', tableData: []);
+        }
+        return ActionResult.success(
+          reply: action.reply.isNotEmpty ? action.reply : '"${item.name}" ki stock history:',
+          tableData: history.map((h) => {
+            'Date': (h['created_at'] as String?)?.split('T').first ?? '-',
+            'Type': h['change_type']?.toString() ?? '-',
+            'Change': h['qty_change'].toString(),
+            'Before': h['qty_before'].toString(),
+            'After': h['qty_after'].toString(),
+            'Note': h['reason']?.toString() ?? '-',
+          }).toList(),
+        );
+      }
+
+    // ══════════════════════════════════════════════════════
     //  CUSTOMERS
     // ══════════════════════════════════════════════════════
 
@@ -697,16 +794,32 @@ class ActionExecutor {
         );
 
       case 'low_stock':
-        final items = await _db.getLowStockItems(threshold: 10);
+        final items = await _db.getLowStockItemsByAlert();
         final label = aiReply.isNotEmpty ? aiReply : '⚠️ Low stock items:';
-        if (items.isEmpty) return ActionResult.success(reply: '✅ Sab items ka stock theek hai (>10 units).');
+        if (items.isEmpty) return ActionResult.success(reply: '✅ Sab items ka stock theek hai.');
         return ActionResult.success(
           reply: '$label (${items.length} items)',
           tableData: items.map((i) => {
             'Name': i['name'],
             'Stock': i['qty'].toString(),
+            'Min Alert': (i['min_stock_alert'] == null || i['min_stock_alert'] == 0) ? '5' : i['min_stock_alert'].toString(),
             'Price': '₹${i['price'] ?? "-"}',
           }).toList(),
+        );
+
+      case 'inventory_valuation':
+        final val = await _db.getInventoryValuation();
+        final label = aiReply.isNotEmpty ? aiReply : '📦 Inventory Valuation:';
+        return ActionResult.success(
+          reply: label,
+          detailCard: {
+            'type': 'analytics',
+            'Total Items': '${val['item_count']}',
+            'Total Units': '${val['total_units']}',
+            'Cost Value': '₹${val['total_cost_value']}',
+            'Selling Value': '₹${val['total_selling_value']}',
+            'Potential Profit': '₹${val['potential_profit']}',
+          },
         );
 
       case 'stock_check':
@@ -924,7 +1037,7 @@ class ActionExecutor {
         final bsMonth = await _db.getDateRangeSaleSummary(30);
         final bsPurch = await _db.getPurchaseSummaryByDays(30);
         final bsUnpaid = await _db.getUnpaidBills();
-        final bsLowStock = await _db.getLowStockItems(threshold: 10);
+        final bsLowStock = await _db.getLowStockItemsByAlert();
         final bsTopItems = await _db.getTopSellingItems(limit: 3);
         final totalUnpaidAmt = bsUnpaid.fold<double>(0, (s, b) => s + ((b['total_amount'] as num?)?.toDouble() ?? 0));
         final labelBs = aiReply.isNotEmpty ? aiReply : '📊 Business Summary:';
@@ -1047,7 +1160,7 @@ class ActionExecutor {
         );
 
       case 'combined_report':
-        final crLow = await _db.getLowStockItems(threshold: 10);
+        final crLow = await _db.getLowStockItemsByAlert();
         final crUnpaid = await _db.getCustomersWithPending();
         final crSupPend = await _db.getSuppliersWithPending();
         final crUnpaidAmt = crUnpaid.fold<double>(0, (s, c) => s + (c['pending_amount'] as num).toDouble());
@@ -1226,27 +1339,27 @@ class ActionExecutor {
     double.parse((subtotal - billDiscount + gstAmount).toStringAsFixed(2));
     final billNumber = await _db.generateBillNumber();
 
-    final billId = await _db.insertSaleBill({
-      'bill_number': billNumber,
-      'customer_id': c.id,
-      'bill_date': DateTime.now().toIso8601String().split('T')[0],
-      'tax_type': state.taxType ?? 'exclusive',
-      'discount_type': state.discountType ?? 'none',
-      'discount_value': state.discountValue ?? 0,
-      'discount_amount': billDiscount,
-      'subtotal': subtotal,
-      'gst_amount': gstAmount,
-      'total_amount': totalAmount,
-      'payment_mode': state.paymentMode ?? 'cash',
-      'payment_status': state.paymentStatus ?? 'unpaid',
-    });
+    // Bill + line items + stock deduction + stock-history — ONE transaction.
+    // Rolls back completely if anything fails (e.g. bill_number collision).
+    final billId = await _db.createSaleBillAtomic(
+      bill: {
+        'bill_number': billNumber,
+        'customer_id': c.id,
+        'bill_date': DateTime.now().toIso8601String().split('T')[0],
+        'tax_type': state.taxType ?? 'exclusive',
+        'discount_type': state.discountType ?? 'none',
+        'discount_value': state.discountValue ?? 0,
+        'discount_amount': billDiscount,
+        'subtotal': subtotal,
+        'gst_amount': gstAmount,
+        'total_amount': totalAmount,
+        'payment_mode': state.paymentMode ?? 'cash',
+        'payment_status': state.paymentStatus ?? 'unpaid',
+      },
+      lineItems: billLines,
+    );
 
-    for (final line in billLines) {
-      await _db.insertSaleBillItem({...line, 'bill_id': billId});
-      await _db.deductItemStock(line['item_id'] as int, line['qty'] as int);
-    }
-
-    // NOTE: incrementSaleBillCount is handled in AppDatabase.insertSaleBill()
+    // NOTE: incrementSaleBillCount is handled in AppDatabase.createSaleBillAtomic()
     final taxStr = '${state.taxType == 'inclusive'
         ? 'Inclusive'
         : 'Exclusive'} GST: ₹$gstAmount';
@@ -1380,24 +1493,23 @@ class ActionExecutor {
     final totalAmount = double.parse((subtotal + totalTax).toStringAsFixed(2));
     final billNumber = await _db.generatePurchaseBillNumber();
 
-    final billId = await _db.insertPurchaseBill({
-      'bill_number': billNumber,
-      'supplier_id': supplier.id,
-      'bill_date': DateTime.now().toIso8601String().split('T')[0],
-      'subtotal': subtotal,
-      'tax_amount': totalTax,
-      'total_amount': totalAmount,
-      'payment_mode': data['payment_mode'] ?? 'cash',
-      'payment_status': data['payment_status'] ?? 'unpaid',
-      'notes': data['notes'],
-    });
+    // Bill + line items + stock addition + stock-history — ONE transaction.
+    final billId = await _db.createPurchaseBillAtomic(
+      bill: {
+        'bill_number': billNumber,
+        'supplier_id': supplier.id,
+        'bill_date': DateTime.now().toIso8601String().split('T')[0],
+        'subtotal': subtotal,
+        'tax_amount': totalTax,
+        'total_amount': totalAmount,
+        'payment_mode': data['payment_mode'] ?? 'cash',
+        'payment_status': data['payment_status'] ?? 'unpaid',
+        'notes': data['notes'],
+      },
+      lineItems: billLines,
+    );
 
-    for (final line in billLines) {
-      await _db.insertPurchaseBillItem({...line, 'bill_id': billId});
-      await _db.addItemStock(line['item_id'] as int, line['qty'] as int);
-    }
-
-    // NOTE: incrementPurchaseBillCount is handled in AppDatabase.insertPurchaseBill()
+    // NOTE: incrementPurchaseBillCount is handled in AppDatabase.createPurchaseBillAtomic()
 
     return ActionResult.success(
       reply: '✅ Purchase Bill $billNumber bana diya!\n${supplier
@@ -1435,6 +1547,15 @@ class ActionExecutor {
     if (raw is double) return raw.toInt();
     if (raw is String) return int.tryParse(raw);
     return null;
+  }
+
+  /// Resolves an item from action data — by id first, else by name (exact then fuzzy).
+  Future<ItemModel?> _resolveItem(Map<String, dynamic> data) async {
+    final id = _extractId(data);
+    if (id != null) return await _db.getItemById(id);
+    final name = (data['name'] as String?)?.trim();
+    if (name == null || name.isEmpty) return null;
+    return await _db.getItemByName(name) ?? await _db.getItemFuzzy(name);
   }
 
   int? _toInt(dynamic v) {

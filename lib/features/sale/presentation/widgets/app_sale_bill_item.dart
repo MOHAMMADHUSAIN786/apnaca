@@ -1,4 +1,6 @@
-// lib/widgets/sale_widgets/app_sale_bill_item.dart
+// lib/features/sale/presentation/widgets/app_sale_bill_item.dart
+// UPDATED: Permission guards on edit/delete popup items
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -6,6 +8,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_fonts.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/services/permission_service.dart'; // ← NEW
 import '../../../../database/app_database.dart';
 import '../../../../features/sale/presentation/bloc/sale_bloc.dart';
 import '../../../../features/sale/presentation/bloc/sale_event.dart';
@@ -18,7 +21,7 @@ class AppSaleBillItem extends StatelessWidget {
   final String billDate;
   final String totalAmount;
   final String paymentStatus;
-  final VoidCallback? onBillUpdated; // ← dashboard + sale refresh ke liye
+  final VoidCallback? onBillUpdated;
 
   const AppSaleBillItem({
     super.key,
@@ -31,10 +34,14 @@ class AppSaleBillItem extends StatelessWidget {
     this.onBillUpdated,
   });
 
-  // ────────────────────────────────────────────────────────────────
-  //  DELETE — bill + items (CASCADE) + stock restore
-  // ────────────────────────────────────────────────────────────────
+  // ── DELETE ───────────────────────────────────────────────────
   Future<void> _deleteBill(BuildContext context) async {
+    // ← Permission check
+    if (!PermissionService.instance.canDeleteSaleBills) {
+      showPermissionDeniedSnackBar(context, 'Sale Bill Delete');
+      return;
+    }
+
     final shouldDelete = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -57,25 +64,20 @@ class AppSaleBillItem extends StatelessWidget {
     if (shouldDelete != true) return;
 
     final db = AppDatabase.instance;
-
-    // ── Delete bill + restore stock (DB method handles both) ──────
     await db.deleteSaleBillWithStockRestore(billId);
 
-    // ── Refresh UI ─────────────────────────────────────────────────
     if (context.mounted) {
       context.read<SaleBloc>().add(FetchSaleBills());
-      onBillUpdated?.call(); // refreshes home dashboard + purchase screen
+      onBillUpdated?.call();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Bill $billNumber deleted successfully')),
       );
     }
   }
 
-  // ────────────────────────────────────────────────────────────────
-  //  VIEW — PDF share
-  // ────────────────────────────────────────────────────────────────
+  // ── VIEW ─────────────────────────────────────────────────────
   Future<void> _viewBill(BuildContext context) async {
-    final db         = AppDatabase.instance;
+    final db = AppDatabase.instance;
     final billDetailMap = await db.getSaleBillById(billId);
     if (billDetailMap == null) return;
 
@@ -94,8 +96,8 @@ class AppSaleBillItem extends StatelessWidget {
     };
 
     final lineItems = lineItemsMap.map((item) {
-      final taxAmount  = item['tax_amount'] as num? ?? 0;
-      final lineTotal  = item['line_total'] as num? ?? 0;
+      final taxAmount = item['tax_amount'] as num? ?? 0;
+      final lineTotal = item['line_total'] as num? ?? 0;
       return {
         'item':  item['item_name'],
         'qty':   item['qty'],
@@ -111,27 +113,25 @@ class AppSaleBillItem extends StatelessWidget {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
-  //  EDIT — payment status/mode/notes + dashboard refresh
-  // ────────────────────────────────────────────────────────────────
+  // ── EDIT ─────────────────────────────────────────────────────
   Future<void> _editBill(BuildContext context) async {
+    // ← Permission check
+    if (!PermissionService.instance.canEditSaleBills) {
+      showPermissionDeniedSnackBar(context, 'Sale Bill Edit');
+      return;
+    }
+
     final saleBloc = context.read<SaleBloc>();
     final db       = AppDatabase.instance;
 
     final billData = await db.getSaleBillById(billId);
     if (billData == null) return;
 
-    final customerController = TextEditingController(
-      text: billData['customer_name'] ?? '',
-    );
+    final customerController = TextEditingController(text: billData['customer_name'] ?? '');
     final totalController = TextEditingController(
-      text: (billData['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00',
-    );
-    final noteController = TextEditingController(
-      text: billData['notes'] ?? '',
-    );
+        text: (billData['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00');
+    final noteController = TextEditingController(text: billData['notes'] ?? '');
 
-    // ── Sanitize: DB value agar list mein nahi hai to default use karo ──
     const _validStatuses = ['paid', 'unpaid', 'partial'];
     const _validModes    = ['cash', 'upi', 'bank', 'card', 'credit', 'udhar'];
 
@@ -139,7 +139,7 @@ class AppSaleBillItem extends StatelessWidget {
     final rawMode   = (billData['payment_mode']   ?? 'cash').toString().toLowerCase().trim();
 
     String paymentStatusValue = _validStatuses.contains(rawStatus) ? rawStatus : 'unpaid';
-    String paymentModeValue   = _validModes.contains(rawMode)      ? rawMode   : 'cash';
+    String paymentModeValue   = _validModes.contains(rawMode) ? rawMode : 'cash';
 
     final formKey = GlobalKey<FormState>();
 
@@ -154,9 +154,9 @@ class AppSaleBillItem extends StatelessWidget {
               child: Container(
                 padding: EdgeInsets.all(18.w),
                 decoration: BoxDecoration(
-                  color:        app_colors.Dbackgroun_color,
+                  color: app_colors.Dbackgroun_color,
                   borderRadius: BorderRadius.circular(18.r),
-                  border:       Border.all(color: app_colors.Dborder_color),
+                  border: Border.all(color: app_colors.Dborder_color),
                 ),
                 child: SingleChildScrollView(
                   child: Form(
@@ -164,28 +164,23 @@ class AppSaleBillItem extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-
-                        // ── HEADER ──────────────────────────────────
+                        // HEADER
                         Row(
                           children: [
                             Container(
                               padding: EdgeInsets.all(10.w),
                               decoration: BoxDecoration(
-                                color:        Colors.blue.shade50,
+                                color: Colors.blue.shade50,
                                 borderRadius: BorderRadius.circular(12.r),
                               ),
-                              child: Icon(Icons.receipt_long, color: app_colors.black),
+                              child: Icon(Icons.edit_note_rounded, color: app_colors.black),
                             ),
                             SizedBox(width: 12.w),
                             Expanded(
-                              child: Text(
-                                "Update Sale Bill",
-                                style: TextStyle(
-                                  fontSize:   18.sp,
-                                  fontFamily: app_fonts.Medium,
-                                  color:      app_colors.black,
-                                ),
-                              ),
+                              child: Text("Edit Bill",
+                                  style: TextStyle(
+                                      fontSize: 18.sp, fontWeight: FontWeight.w600,
+                                      color: app_colors.black)),
                             ),
                             InkWell(
                               onTap: () => Navigator.pop(dialogCtx),
@@ -193,97 +188,66 @@ class AppSaleBillItem extends StatelessWidget {
                             ),
                           ],
                         ),
-
-                        SizedBox(height: 22.h),
-
-                        // ── BILL NUMBER (read-only) ───────────────
-                        Container(
-                          width:   double.infinity,
-                          padding: EdgeInsets.all(12.w),
-                          decoration: BoxDecoration(
-                            color:        Colors.white,
-                            borderRadius: BorderRadius.circular(12.r),
-                            border:       Border.all(color: app_colors.Dborder_color),
-                          ),
-                          child: Text(
-                            "Bill No : $billNumber",
-                            style: TextStyle(
-                              fontSize:   14.sp,
-                              fontFamily: app_fonts.Medium,
-                            ),
-                          ),
-                        ),
-
+                        SizedBox(height: 20.h),
+                        // Customer
+                        _buildField(controller: customerController, label: "Customer", icon: Icons.person),
                         SizedBox(height: 14.h),
-
+                        // Total
                         _buildField(
-                          controller:  customerController,
-                          label:       "Customer Name",
-                          icon:        Icons.person,
-                        ),
-                        SizedBox(height: 14.h),
-
-                        _buildField(
-                          controller:   totalController,
-                          label:        "Total Amount",
-                          icon:         Icons.currency_rupee,
+                          controller: totalController, label: "Total Amount", icon: Icons.currency_rupee,
                           keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         ),
                         SizedBox(height: 14.h),
-
-                        // ── PAYMENT STATUS ───────────────────────
+                        // Payment Status dropdown
                         DropdownButtonFormField<String>(
                           value: paymentStatusValue,
                           decoration: InputDecoration(
-                            labelText: "Payment Status",
-                            filled:    true,
-                            fillColor: Colors.white,
-                            border:    OutlineInputBorder(
+                            labelText: 'Payment Status',
+                            prefixIcon: const Icon(Icons.payment),
+                            filled: true, fillColor: Colors.white,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+                            enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12.r),
+                              borderSide: BorderSide(color: app_colors.Dborder_color),
                             ),
                           ),
-                          items: ['paid', 'unpaid', 'partial']
-                              .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
-                              .toList(),
-                          onChanged: (v) => setState(() => paymentStatusValue = v!),
+                          items: _validStatuses.map((s) =>
+                              DropdownMenuItem(value: s, child: Text(s.toUpperCase()))).toList(),
+                          onChanged: (v) { if (v != null) setState(() => paymentStatusValue = v); },
                         ),
                         SizedBox(height: 14.h),
-
-                        // ── PAYMENT MODE ─────────────────────────
+                        // Payment Mode dropdown
                         DropdownButtonFormField<String>(
                           value: paymentModeValue,
                           decoration: InputDecoration(
-                            labelText: "Payment Mode",
-                            filled:    true,
-                            fillColor: Colors.white,
-                            border:    OutlineInputBorder(
+                            labelText: 'Payment Mode',
+                            prefixIcon: const Icon(Icons.account_balance_wallet),
+                            filled: true, fillColor: Colors.white,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+                            enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12.r),
+                              borderSide: BorderSide(color: app_colors.Dborder_color),
                             ),
                           ),
-                          items: ['cash', 'upi', 'bank', 'card', 'credit', 'udhar']
-                              .map((e) => DropdownMenuItem(value: e, child: Text(e.toUpperCase())))
-                              .toList(),
-                          onChanged: (v) => setState(() => paymentModeValue = v!),
+                          items: _validModes.map((m) =>
+                              DropdownMenuItem(value: m, child: Text(m.toUpperCase()))).toList(),
+                          onChanged: (v) { if (v != null) setState(() => paymentModeValue = v); },
                         ),
                         SizedBox(height: 14.h),
-
+                        // Notes
                         _buildField(
-                          controller: noteController,
-                          label:      "Notes",
-                          icon:       Icons.notes,
-                          maxLines:   3,
+                          controller: noteController, label: "Notes", icon: Icons.note,
+                          maxLines: 3,
                         ),
                         SizedBox(height: 24.h),
-
+                        // Buttons
                         Row(
                           children: [
                             Expanded(
                               child: OutlinedButton(
                                 style: OutlinedButton.styleFrom(
                                   padding: EdgeInsets.symmetric(vertical: 14.h),
-                                  shape:   RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12.r),
-                                  ),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
                                 ),
                                 onPressed: () => Navigator.pop(dialogCtx),
                                 child: Text("Cancel", style: TextStyle(color: app_colors.black)),
@@ -293,56 +257,32 @@ class AppSaleBillItem extends StatelessWidget {
                             Expanded(
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  elevation:       0,
-                                  backgroundColor: app_colors.table_header_bg,
-                                  padding:         EdgeInsets.symmetric(vertical: 14.h),
-                                  shape:           RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12.r),
-                                  ),
+                                  elevation: 0, backgroundColor: app_colors.table_header_bg,
+                                  padding: EdgeInsets.symmetric(vertical: 14.h),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
                                 ),
                                 onPressed: () async {
-                                  try {
-                                    final dbRaw = await db.database;
-                                    await dbRaw.update(
-                                      'sale_bills',
-                                      {
-                                        'payment_status': paymentStatusValue,
-                                        'payment_mode':   paymentModeValue,
-                                        'total_amount':   double.tryParse(totalController.text) ?? 0,
-                                        'notes':          noteController.text.trim(),
-                                      },
-                                      where:     'id = ?',
-                                      whereArgs: [billId],
-                                    );
-
-                                    Navigator.pop(dialogCtx);
-
-                                    if (context.mounted) {
-                                      // ── refresh sale list ──────────────────
-                                      saleBloc.add(FetchSaleBills());
-                                      // ── refresh dashboard + other screens ─
-                                      onBillUpdated?.call();
-
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text("Bill updated successfully")),
-                                      );
-                                    }
-                                  } catch (e) {
+                                  if (!formKey.currentState!.validate()) return;
+                                  await db.updateSaleBillStatus(billId, paymentStatusValue);
+                                  await (await AppDatabase.instance.database).update(
+                                    'sale_bills',
+                                    {
+                                      'payment_mode': paymentModeValue,
+                                      'notes': noteController.text.trim(),
+                                    },
+                                    where: 'id = ?', whereArgs: [billId],
+                                  );
+                                  if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                                  saleBloc.add(FetchSaleBills());
+                                  onBillUpdated?.call();
+                                  if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content:         Text("Failed: $e"),
-                                        backgroundColor: Colors.red,
-                                      ),
+                                      const SnackBar(content: Text('Bill updated successfully')),
                                     );
                                   }
                                 },
-                                child: Text(
-                                  "Update",
-                                  style: TextStyle(
-                                    color:      app_colors.black,
-                                    fontFamily: app_fonts.Medium,
-                                  ),
-                                ),
+                                child: Text("Update",
+                                    style: TextStyle(color: app_colors.black, fontWeight: FontWeight.w600)),
                               ),
                             ),
                           ],
@@ -359,11 +299,11 @@ class AppSaleBillItem extends StatelessWidget {
     );
   }
 
-  // ────────────────────────────────────────────────────────────────
-  //  BUILD
-  // ────────────────────────────────────────────────────────────────
+  // ── BUILD ────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final perm = PermissionService.instance; // ← NEW
+
     return Padding(
       padding: const EdgeInsets.only(top: 18, left: 12, right: 12),
       child: Container(
@@ -383,19 +323,15 @@ class AppSaleBillItem extends StatelessWidget {
               width:  44.w,
               height: 44.h,
               decoration: BoxDecoration(
-                color:        Colors.white,
-                border:       Border.all(color: app_colors.Dborder_color),
+                color: Colors.white,
+                border: Border.all(color: app_colors.Dborder_color),
                 borderRadius: BorderRadius.circular(4.r),
               ),
               child: Center(
                 child: Text(
                   "SB\n${billNumber.contains('-') ? billNumber.split('-').last : billNumber}",
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize:   12.sp,
-                    color:      app_colors.black,
-                    fontFamily: app_fonts.Bold,
-                  ),
+                  style: TextStyle(fontSize: 12.sp, color: app_colors.black, fontFamily: app_fonts.Bold),
                 ),
               ),
             ),
@@ -405,26 +341,13 @@ class AppSaleBillItem extends StatelessWidget {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment:  MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    partyName,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize:   16.sp,
-                      color:      Colors.black,
-                      fontFamily: app_fonts.Medium,
-                    ),
-                  ),
+                  Text(partyName, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 16.sp, color: Colors.black, fontFamily: app_fonts.Medium)),
                   SizedBox(height: 4.h),
-                  Text(
-                    billDate,
-                    style: TextStyle(
-                      fontSize:   11.sp,
-                      color:      Colors.black,
-                      fontFamily: app_fonts.Regular,
-                    ),
-                  ),
+                  Text(billDate,
+                      style: TextStyle(fontSize: 11.sp, color: Colors.black, fontFamily: app_fonts.Regular)),
                 ],
               ),
             ),
@@ -437,8 +360,7 @@ class AppSaleBillItem extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.only(top: 6.h),
                   child: Container(
-                    width:  56.w,
-                    height: 18.h,
+                    width: 56.w, height: 18.h,
                     decoration: BoxDecoration(
                       color: paymentStatus.toLowerCase() == 'paid'
                           ? app_colors.LightGreen
@@ -449,67 +371,60 @@ class AppSaleBillItem extends StatelessWidget {
                       child: Text(
                         paymentStatus,
                         style: TextStyle(
-                          fontSize:   11.sp,
-                          color:      paymentStatus.toLowerCase() == 'paid'
+                          fontSize: 11.sp, fontFamily: app_fonts.Medium,
+                          color: paymentStatus.toLowerCase() == 'paid'
                               ? app_colors.GreenColor
                               : app_colors.c_danger,
-                          fontFamily: app_fonts.Medium,
                         ),
                       ),
                     ),
                   ),
                 ),
                 SizedBox(height: 4.h),
-                Text(
-                  '${app_strings.Rs}$totalAmount',
-                  style: TextStyle(
-                    fontSize:   11.sp,
-                    color:      Colors.black,
-                    fontFamily: app_fonts.Regular,
-                  ),
-                ),
+                Text('${app_strings.Rs}$totalAmount',
+                    style: TextStyle(fontSize: 11.sp, color: Colors.black, fontFamily: app_fonts.Regular)),
               ],
             ),
 
-            // 3-dot menu
+            // ── 3-dot menu with PERMISSION GUARDS ─────────────
             PopupMenuButton<String>(
-              color:      app_colors.white,
+              color: app_colors.white,
               onSelected: (value) {
                 if (value == 'view')   _viewBill(context);
-                else if (value == 'edit')   _editBill(context);
-                else if (value == 'delete') _deleteBill(context);
+                if (value == 'edit')   _editBill(context);
+                if (value == 'delete') _deleteBill(context);
               },
               itemBuilder: (ctx) => [
+                // View — always visible
                 PopupMenuItem<String>(
-                  height: 32,
-                  value:  'view',
-                  child:  Row(children: [
+                  height: 32, value: 'view',
+                  child: Row(children: [
                     Icon(Icons.remove_red_eye, size: 18, color: app_colors.black),
                     SizedBox(width: 10.w),
                     Text("View Bill", style: TextStyle(fontSize: 12.sp)),
                   ]),
                 ),
-                PopupMenuItem<String>(
-                  height: 32,
-                  value:  'edit',
-                  child:  Row(children: [
-                    Icon(Icons.edit, size: 18, color: app_colors.black),
-                    SizedBox(width: 10.w),
-                    Text("Edit Bill", style: TextStyle(fontSize: 12.sp)),
-                  ]),
-                ),
-                PopupMenuItem<String>(
-                  height: 32,
-                  value:  'delete',
-                  child:  Row(children: [
-                    Icon(Icons.delete, size: 18, color: app_colors.c_danger),
-                    SizedBox(width: 10.w),
-                    Text(
-                      "Delete Bill",
-                      style: TextStyle(fontSize: 12.sp, color: app_colors.c_danger),
-                    ),
-                  ]),
-                ),
+                // Edit — only if allowed
+                if (perm.canEditSaleBills)
+                  PopupMenuItem<String>(
+                    height: 32, value: 'edit',
+                    child: Row(children: [
+                      Icon(Icons.edit, size: 18, color: app_colors.black),
+                      SizedBox(width: 10.w),
+                      Text("Edit Bill", style: TextStyle(fontSize: 12.sp)),
+                    ]),
+                  ),
+                // Delete — only if allowed
+                if (perm.canDeleteSaleBills)
+                  PopupMenuItem<String>(
+                    height: 32, value: 'delete',
+                    child: Row(children: [
+                      Icon(Icons.delete, size: 18, color: app_colors.c_danger),
+                      SizedBox(width: 10.w),
+                      Text("Delete Bill",
+                          style: TextStyle(fontSize: 12.sp, color: app_colors.c_danger)),
+                    ]),
+                  ),
               ],
               icon: Icon(Icons.more_vert, color: app_colors.black),
             ),
@@ -520,6 +435,7 @@ class AppSaleBillItem extends StatelessWidget {
   }
 }
 
+// ── Field helper ─────────────────────────────────────────────────
 Widget _buildField({
   required TextEditingController controller,
   required String label,
@@ -532,18 +448,17 @@ Widget _buildField({
     keyboardType: keyboardType,
     maxLines:     maxLines,
     decoration: InputDecoration(
-      labelText:   label,
-      prefixIcon:  Icon(icon),
-      filled:      true,
-      fillColor:   Colors.white,
-      border:      OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
+      labelText:  label,
+      prefixIcon: Icon(icon),
+      filled: true, fillColor: Colors.white,
+      border:        OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide:   BorderSide(color: app_colors.Dborder_color),
+        borderSide: BorderSide(color: app_colors.Dborder_color),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide:   BorderSide(color: app_colors.table_header_bg, width: 1.4),
+        borderSide: BorderSide(color: app_colors.table_header_bg, width: 1.4),
       ),
     ),
   );

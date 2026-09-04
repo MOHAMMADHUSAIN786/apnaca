@@ -1,26 +1,19 @@
 // lib/features/subscription/model/subscription_model.dart
+// UPDATED: maxTeamMembers + maxCompanies getters add kiye
 
 enum SubscriptionPlan { free, silver, gold }
-
 enum BillingCycle { monthly, yearly }
 
 class SubscriptionModel {
   final SubscriptionPlan plan;
   final DateTime? expiryDate;
   final BillingCycle? billingCycle;
-
-  // Monthly usage counters (reset each month — Silver/Gold tracking only)
-  // For FREE plan: these are LIFETIME counters — never reset
   final int saleBillsUsedThisMonth;
   final int purchaseBillsUsedThisMonth;
   final int customersCount;
   final int itemsCount;
-
-  // Daily usage counters (reset each day)
   final int aiPromptsUsedToday;
   final DateTime? aiPromptsResetDate;
-
-  // Company count
   final int companiesCount;
 
   const SubscriptionModel({
@@ -36,47 +29,31 @@ class SubscriptionModel {
     this.companiesCount = 1,
   });
 
-  // ─────────────────────────────────────────────
-  //  FREE PLAN LIMITS (bills = LIFETIME, never reset)
-  // ─────────────────────────────────────────────
+  // ─── FREE PLAN LIMITS ─────────────────────────────────────────
   static const int freeMaxCustomers = 50;
   static const int freeMaxItems = 50;
-  static const int freeMaxSaleBills = 10;       // lifetime, no reset
-  static const int freeMaxPurchaseBills = 10;   // lifetime, no reset
+  static const int freeMaxSaleBills = 10;
+  static const int freeMaxPurchaseBills = 10;
   static const int freeMaxAiPromptsPerDay = 10;
   static const int freeMaxCompanies = 1;
 
-  // ─────────────────────────────────────────────
-  //  SILVER PLAN LIMITS
-  // ─────────────────────────────────────────────
+  // ─── SILVER PLAN LIMITS ───────────────────────────────────────
   static const int silverMaxAiPromptsPerDay = 100;
-  // Unlimited: customers, items, bills, 1 company
 
-  // ─────────────────────────────────────────────
-  //  GOLD PLAN LIMITS
-  // ─────────────────────────────────────────────
-  // Unlimited AI prompts (fair use), multi-user, multi-company
-
-  // ─────────────────────────────────────────────
-  //  PRICING
-  // ─────────────────────────────────────────────
+  // ─── PRICING ──────────────────────────────────────────────────
   static const int silverMonthlyPriceRs = 99;
   static const int silverYearlyPriceRs = 999;
   static const int goldMonthlyPriceRs = 299;
   static const int goldYearlyPriceRs = 2999;
 
-  // ─────────────────────────────────────────────
-  //  ACTIVE CHECK
-  // ─────────────────────────────────────────────
+  // ─── ACTIVE CHECK ─────────────────────────────────────────────
   bool get isActive {
     if (plan == SubscriptionPlan.free) return true;
     if (expiryDate == null) return false;
     return DateTime.now().isBefore(expiryDate!);
   }
 
-  // ─────────────────────────────────────────────
-  //  AI PROMPTS
-  // ─────────────────────────────────────────────
+  // ─── AI PROMPTS ───────────────────────────────────────────────
   bool get _isAiResetDue {
     if (aiPromptsResetDate == null) return true;
     final now = DateTime.now();
@@ -88,14 +65,14 @@ class SubscriptionModel {
 
   bool get canUseAiPrompt {
     if (!isActive) return false;
-    if (plan == SubscriptionPlan.gold) return true; // unlimited (fair use)
+    if (plan == SubscriptionPlan.gold) return true;
     final used = effectiveAiPromptsUsedToday;
     if (plan == SubscriptionPlan.silver) return used < silverMaxAiPromptsPerDay;
-    return used < freeMaxAiPromptsPerDay; // free
+    return used < freeMaxAiPromptsPerDay;
   }
 
   int get remainingAiPromptsToday {
-    if (plan == SubscriptionPlan.gold) return -1; // unlimited
+    if (plan == SubscriptionPlan.gold) return -1;
     final used = effectiveAiPromptsUsedToday;
     if (plan == SubscriptionPlan.silver) {
       final r = silverMaxAiPromptsPerDay - used;
@@ -105,9 +82,7 @@ class SubscriptionModel {
     return r < 0 ? 0 : r;
   }
 
-  // ─────────────────────────────────────────────
-  //  SALE BILLS (free = lifetime, no reset)
-  // ─────────────────────────────────────────────
+  // ─── SALE BILLS ───────────────────────────────────────────────
   bool get canCreateSaleBill {
     if (!isActive) return false;
     if (plan != SubscriptionPlan.free) return true;
@@ -115,14 +90,12 @@ class SubscriptionModel {
   }
 
   int get remainingSaleBills {
-    if (plan != SubscriptionPlan.free) return -1; // unlimited
+    if (plan != SubscriptionPlan.free) return -1;
     final r = freeMaxSaleBills - saleBillsUsedThisMonth;
     return r < 0 ? 0 : r;
   }
 
-  // ─────────────────────────────────────────────
-  //  PURCHASE BILLS (free = lifetime, no reset)
-  // ─────────────────────────────────────────────
+  // ─── PURCHASE BILLS ───────────────────────────────────────────
   bool get canCreatePurchaseBill {
     if (!isActive) return false;
     if (plan != SubscriptionPlan.free) return true;
@@ -135,9 +108,7 @@ class SubscriptionModel {
     return r < 0 ? 0 : r;
   }
 
-  // ─────────────────────────────────────────────
-  //  CUSTOMERS
-  // ─────────────────────────────────────────────
+  // ─── CUSTOMERS ────────────────────────────────────────────────
   bool get canAddCustomer {
     if (!isActive) return false;
     if (plan != SubscriptionPlan.free) return true;
@@ -150,9 +121,7 @@ class SubscriptionModel {
     return r < 0 ? 0 : r;
   }
 
-  // ─────────────────────────────────────────────
-  //  ITEMS
-  // ─────────────────────────────────────────────
+  // ─── ITEMS ────────────────────────────────────────────────────
   bool get canAddItem {
     if (!isActive) return false;
     if (plan != SubscriptionPlan.free) return true;
@@ -165,44 +134,48 @@ class SubscriptionModel {
     return r < 0 ? 0 : r;
   }
 
-  // ─────────────────────────────────────────────
-  //  COMPANIES
-  // ─────────────────────────────────────────────
+  // ─── COMPANIES ────────────────────────────────────────────────
   bool get canAddCompany {
     if (!isActive) return false;
-    if (plan == SubscriptionPlan.gold) return true; // multi-company
-    return companiesCount < freeMaxCompanies; // free & silver: 1 company
+    if (plan == SubscriptionPlan.gold) return true;
+    return companiesCount < freeMaxCompanies;
   }
 
-  bool get hasMultiUser => plan == SubscriptionPlan.gold && isActive;
-  bool get hasMultiCompany => plan == SubscriptionPlan.gold && isActive;
-  bool get hasGstBilling => plan != SubscriptionPlan.free && isActive;
-  bool get hasPdfExport => plan != SubscriptionPlan.free && isActive;
+  // ── NEW: Max companies allowed ─────────────────────────────────
+  int get maxCompanies {
+    if (plan == SubscriptionPlan.gold && isActive) return 10;
+    return 1;
+  }
+
+  // ── NEW: Max team members per company ─────────────────────────
+  int get maxTeamMembers {
+    if (plan == SubscriptionPlan.gold && isActive) return 5;
+    return 0; // Free & Silver mein team nahi
+  }
+
+  // ─── FEATURE FLAGS ────────────────────────────────────────────
+  bool get hasMultiUser       => plan == SubscriptionPlan.gold && isActive;
+  bool get hasMultiCompany    => plan == SubscriptionPlan.gold && isActive;
+  bool get hasGstBilling      => plan != SubscriptionPlan.free && isActive;
+  bool get hasPdfExport       => plan != SubscriptionPlan.free && isActive;
   bool get hasAdvancedReports => plan != SubscriptionPlan.free && isActive;
-  bool get hasProfitAnalysis => plan == SubscriptionPlan.gold && isActive;
-  bool get hasSalesForecast => plan == SubscriptionPlan.gold && isActive;
+  bool get hasProfitAnalysis  => plan == SubscriptionPlan.gold && isActive;
+  bool get hasSalesForecast   => plan == SubscriptionPlan.gold && isActive;
   bool get hasSupplierAnalytics => plan == SubscriptionPlan.gold && isActive;
   bool get hasCustomerAnalytics => plan == SubscriptionPlan.gold && isActive;
   bool get hasPrioritySupport => plan == SubscriptionPlan.gold && isActive;
   bool get hasPaymentTracking => plan != SubscriptionPlan.free && isActive;
 
-  // ─────────────────────────────────────────────
-  //  DISPLAY HELPERS
-  // ─────────────────────────────────────────────
+  // ─── DISPLAY HELPERS ─────────────────────────────────────────
   String get planName {
     switch (plan) {
-      case SubscriptionPlan.free:
-        return 'Free';
-      case SubscriptionPlan.silver:
-        return 'Silver';
-      case SubscriptionPlan.gold:
-        return 'Gold';
+      case SubscriptionPlan.free:   return 'Free';
+      case SubscriptionPlan.silver: return 'Silver';
+      case SubscriptionPlan.gold:   return 'Gold';
     }
   }
 
-  // ─────────────────────────────────────────────
-  //  SERIALIZATION
-  // ─────────────────────────────────────────────
+  // ─── SERIALIZATION ───────────────────────────────────────────
   Map<String, dynamic> toMap() => {
     'plan': plan.name,
     'expiry_date': expiryDate?.toIso8601String(),
@@ -219,16 +192,12 @@ class SubscriptionModel {
   factory SubscriptionModel.fromMap(Map<String, dynamic> map) {
     final planStr = map['plan'] as String? ?? 'free';
     final plan = SubscriptionPlan.values.firstWhere(
-          (p) => p.name == planStr,
-      orElse: () => SubscriptionPlan.free,
+          (p) => p.name == planStr, orElse: () => SubscriptionPlan.free,
     );
-
     final cycleStr = map['billing_cycle'] as String?;
     final cycle = cycleStr != null
         ? BillingCycle.values.firstWhere(
-          (c) => c.name == cycleStr,
-      orElse: () => BillingCycle.monthly,
-    )
+            (c) => c.name == cycleStr, orElse: () => BillingCycle.monthly)
         : null;
 
     return SubscriptionModel(
@@ -246,39 +215,26 @@ class SubscriptionModel {
   }
 
   SubscriptionModel copyWith({
-    SubscriptionPlan? plan,
-    DateTime? expiryDate,
-    BillingCycle? billingCycle,
-    int? saleBillsUsedThisMonth,
-    int? purchaseBillsUsedThisMonth,
-    int? customersCount,
-    int? itemsCount,
-    int? aiPromptsUsedToday,
-    DateTime? aiPromptsResetDate,
-    int? companiesCount,
-  }) =>
-      SubscriptionModel(
-        plan: plan ?? this.plan,
-        expiryDate: expiryDate ?? this.expiryDate,
-        billingCycle: billingCycle ?? this.billingCycle,
-        saleBillsUsedThisMonth: saleBillsUsedThisMonth ?? this.saleBillsUsedThisMonth,
-        purchaseBillsUsedThisMonth: purchaseBillsUsedThisMonth ?? this.purchaseBillsUsedThisMonth,
-        customersCount: customersCount ?? this.customersCount,
-        itemsCount: itemsCount ?? this.itemsCount,
-        aiPromptsUsedToday: aiPromptsUsedToday ?? this.aiPromptsUsedToday,
-        aiPromptsResetDate: aiPromptsResetDate ?? this.aiPromptsResetDate,
-        companiesCount: companiesCount ?? this.companiesCount,
-      );
+    SubscriptionPlan? plan, DateTime? expiryDate, BillingCycle? billingCycle,
+    int? saleBillsUsedThisMonth, int? purchaseBillsUsedThisMonth,
+    int? customersCount, int? itemsCount,
+    int? aiPromptsUsedToday, DateTime? aiPromptsResetDate, int? companiesCount,
+  }) => SubscriptionModel(
+    plan: plan ?? this.plan,
+    expiryDate: expiryDate ?? this.expiryDate,
+    billingCycle: billingCycle ?? this.billingCycle,
+    saleBillsUsedThisMonth: saleBillsUsedThisMonth ?? this.saleBillsUsedThisMonth,
+    purchaseBillsUsedThisMonth: purchaseBillsUsedThisMonth ?? this.purchaseBillsUsedThisMonth,
+    customersCount: customersCount ?? this.customersCount,
+    itemsCount: itemsCount ?? this.itemsCount,
+    aiPromptsUsedToday: aiPromptsUsedToday ?? this.aiPromptsUsedToday,
+    aiPromptsResetDate: aiPromptsResetDate ?? this.aiPromptsResetDate,
+    companiesCount: companiesCount ?? this.companiesCount,
+  );
 
-  /// Safe date parse: handles both String ("2025-06-01") and Firestore Timestamp
   static DateTime? _parseDateSafe(dynamic value) {
     if (value == null) return null;
     if (value is String) return DateTime.tryParse(value);
-    // Firestore Timestamp — has toDate() method
-    try {
-      return (value as dynamic).toDate() as DateTime?;
-    } catch (_) {
-      return null;
-    }
+    try { return (value as dynamic).toDate() as DateTime?; } catch (_) { return null; }
   }
 }

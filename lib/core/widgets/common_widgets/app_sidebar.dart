@@ -1,91 +1,352 @@
+// lib/core/widgets/common_widgets/app_sidebar.dart
+
 import 'package:apnaca/features/supplier/presentation/pages/supplier_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/constants/app_colors.dart';
+import '../../../core/constants/app_fonts.dart';
+import '../../../core/services/sync_service.dart';
 import '../../../database/app_database.dart';
 import '../../../features/auth/presentation/pages/auth_screen.dart';
+import '../../../features/company/model/company_model.dart';
+import '../../../features/company/presentation/pages/company_screen.dart';
+import '../../../features/company/service/company_service.dart';
 import '../../../features/contact_us/contactus_screen.dart';
 import '../../../features/customer/presentation/pages/customer_screen.dart';
 import '../../../features/feedback/feedback_screen.dart';
+import '../../../features/other/nav_bar.dart';
 import '../../../features/profile/presentation/pages/profile_screen.dart';
 import '../../../features/setting/presentation/pages/setting_screen.dart';
+import '../../../features/subscription/model/subscription_model.dart';
 import '../../../features/subscription/presentation/pages/subscription_screen.dart';
+import '../../../features/subscription/service/subscription_service.dart';
 import '../../../features/warehouse/presentation/pages/warehouse_screen.dart';
-import '../../constants/app_colors.dart';
-import '../../constants/app_fonts.dart';
-import '../../services/sync_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../services/permission_service.dart';
 
 class AppSideBar extends StatefulWidget {
-  const AppSideBar({super.key});
+  final VoidCallback? onRefreshAll;
+  const AppSideBar({super.key, this.onRefreshAll});
 
   @override
   State<AppSideBar> createState() => _AppSideBarState();
 }
 
 class _AppSideBarState extends State<AppSideBar> {
-
   Map<String, dynamic>? userData;
-
+  SubscriptionModel? _sub;
+  List<CompanyModel> _companies = [];
+  String? _activeCompanyId;
+  bool _loadingCompanies = false;
+  bool _switching = false;
   bool isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _fetchUser();
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    await _resolveActiveCompany();
+    await Future.wait([_fetchUser(), _fetchSubAndCompanies()]);
+  }
+
+  Future<void> _resolveActiveCompany() async {
+    final runtimeId = AppDatabase.activeCompanyId;
+    if (runtimeId != null) {
+      _activeCompanyId = runtimeId;
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final prefs = await SharedPreferences.getInstance();
+      final savedId = prefs.getString('active_company_$uid');
+      if (savedId != null && savedId.isNotEmpty) {
+        await AppDatabase.switchCompany(savedId);
+        _activeCompanyId = savedId;
+      }
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _fetchUser() async {
-
     try {
-
-      final user =
-          FirebaseAuth.instance.currentUser;
-
+      final user = FirebaseAuth.instance.currentUser;
       if (user == null) return;
-
-      final doc = await FirebaseFirestore
-          .instance
+      final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
+      if (doc.exists && mounted) {
+        setState(() { userData = doc.data(); isLoading = false; });
+      }
+    } catch (_) {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
 
-      if (doc.exists) {
+  Future<void> _fetchSubAndCompanies() async {
+    try {
+      final sub = await SubscriptionService.instance.getSubscription();
+      if (mounted) setState(() => _sub = sub);
+    } catch (_) {}
+    await _fetchCompanies();
+  }
 
-        userData = doc.data();
-
-        if (mounted) {
-          setState(() {
-            isLoading = false;
-          });
+  Future<void> _fetchCompanies() async {
+    if (mounted) setState(() => _loadingCompanies = true);
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final list = await CompanyService.instance.getMyCompanies();
+      String? confirmedActive = _activeCompanyId;
+      if (confirmedActive != null) {
+        final stillExists = list.any((c) => c.id == confirmedActive);
+        if (!stillExists) confirmedActive = list.isNotEmpty ? list.first.id : null;
+      } else if (list.isNotEmpty) {
+        confirmedActive = list.first.id;
+        if (AppDatabase.activeCompanyId != confirmedActive) {
+          await AppDatabase.switchCompany(confirmedActive);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('active_company_$uid', confirmedActive!);
         }
       }
-
-    } catch (e) {
-
-      debugPrint(
-          "SIDEBAR USER ERROR: $e");
-
       if (mounted) {
         setState(() {
-          isLoading = false;
+          _companies = list;
+          _activeCompanyId = confirmedActive;
         });
       }
+    } catch (_) {}
+    if (mounted) setState(() => _loadingCompanies = false);
+  }
+
+  Future<void> _switchTo(String? companyId) async {
+    if (_switching || companyId == _activeCompanyId) return;
+    setState(() => _switching = true);
+    try {
+      await CompanyService.instance.switchToCompany(companyId);
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        final prefs = await SharedPreferences.getInstance();
+        if (companyId != null) {
+          await prefs.setString('active_company_$uid', companyId);
+        } else {
+          await prefs.remove('active_company_$uid');
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _activeCompanyId = companyId;
+          _switching = false;
+        });
+        Navigator.pop(context);
+        context.visitAncestorElements((el) {
+          if (el.widget is NavBar) {
+            ((el as StatefulElement).state as NavBarState?)?.refreshAllScreens();
+            return false;
+          }
+          return true;
+        });
+        widget.onRefreshAll?.call();
+        final name = companyId == null
+            ? 'Default'
+            : _companies
+            .firstWhere((c) => c.id == companyId,
+            orElse: () => CompanyModel(
+                id: '', ownerUid: '', name: '?',
+                createdAt: DateTime.now()))
+            .name;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 18),
+            SizedBox(width: 8.w),
+            Text('Switched to "$name"',
+                style: const TextStyle(color: Colors.white)),
+          ]),
+          backgroundColor: const Color(0xFF15CA20),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _switching = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Switch failed: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+  }
+
+  Future<void> _manualBackup(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final ok = await FirebaseSyncService.uploadDatabase();
+    if (context.mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok ? 'Backup successful!' : 'Backup failed'),
+        backgroundColor: ok ? Colors.green : Colors.red,
+      ));
+    }
+  }
+
+  Future<void> _restoreData(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore Data?'),
+        content: const Text('This will replace local data with cloud backup.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final ok = await FirebaseSyncService.downloadDatabase();
+    if (context.mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok ? 'Data restored!' : 'No backup found'),
+        backgroundColor: ok ? Colors.green : Colors.orange,
+      ));
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  LOGOUT — FIXED
+  //  1. uploadBeforeLogout has a 5s timeout so it never hangs
+  //  2. Drawer is closed BEFORE navigation to avoid context issues
+  //  3. pushAndRemoveUntil uses root navigator to clear full stack
+  // ─────────────────────────────────────────────────────────────
+  Future<void> _logout(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    // Show loading overlay
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+
+    try {
+      // 1. Upload with timeout — never hang on slow network
+      await FirebaseSyncService.uploadBeforeLogout()
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+
+      // 2. Clear local DB
+      await AppDatabase.instance.clearAllData();
+
+      // 3. Clear caches
+      SubscriptionService.instance.clearCache();
+
+      // 4. Firebase sign out
+      await FirebaseAuth.instance.signOut();
+
+      // 5. Reset sync service
+      FirebaseSyncService.setCurrentUser('');
+    } catch (e) {
+      debugPrint('Logout cleanup error: $e');
+      // Even if cleanup fails, we still sign out
+      try { await FirebaseAuth.instance.signOut(); } catch (_) {}
+    }
+
+    // 6. Navigate — use root navigator to clear entire stack
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+            (_) => false,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final firstName = userData?['first_name'] ?? '';
+    final lastName  = userData?['last_name']  ?? '';
+    final fullName  = '$firstName $lastName'.trim();
+    final email     = userData?['email'] ?? '';
+    final photoUrl  = userData?['photo_url'];
+    String initials = '';
+    if (firstName.isNotEmpty) initials += firstName[0].toUpperCase();
+    if (lastName.isNotEmpty)  initials += lastName[0].toUpperCase();
+
+    // Company name display:
+    // - Owner: active company name from _companies list
+    // - Team member: company name from teamAccess (owner ki company)
+    String companyDisplayName = '';
+    if (PermissionService.instance.isTeamMember) {
+      // Team member — find company name from loaded companies or teamAccess
+      final companyId = PermissionService.instance.teamAccess?.companyId ?? '';
+      final match = _companies.where((c) => c.id == companyId).toList();
+      if (match.isNotEmpty) {
+        companyDisplayName = match.first.name;
+      } else {
+        // Fallback: fetch from Firestore inline would be async, so use cached
+        companyDisplayName = userData?['company_name'] ?? '';
+      }
+    } else {
+      // Owner — show active company
+      if (_activeCompanyId != null) {
+        final match = _companies.where((c) => c.id == _activeCompanyId).toList();
+        if (match.isNotEmpty) companyDisplayName = match.first.name;
+      }
+      // Fallback to user's default company_name
+      if (companyDisplayName.isEmpty) {
+        companyDisplayName = userData?['company_name'] ?? '';
+      }
+    }
+
     return Drawer(
       width: 260.w,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.zero,
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       backgroundColor: app_colors.table_header_bg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Header ───────────────────────────────────────────────
           Theme(
             data: Theme.of(context).copyWith(
               dividerTheme: const DividerThemeData(color: Colors.transparent),
@@ -95,258 +356,150 @@ class _AppSideBarState extends State<AppSideBar> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Builder(
-                    builder: (context) {
-
-                      final firstName =
-                          userData?['first_name'] ?? '';
-
-                      final lastName =
-                          userData?['last_name'] ?? '';
-
-                      final fullName =
-                      "$firstName $lastName".trim();
-
-                      final email =
-                          userData?['email'] ?? '';
-
-                      final photoUrl =
-                      userData?['photo_url'];
-
-                      String initials = '';
-
-                      if (firstName.isNotEmpty) {
-                        initials += firstName[0]
-                            .toUpperCase();
-                      }
-
-                      if (lastName.isNotEmpty) {
-                        initials += lastName[0]
-                            .toUpperCase();
-                      }
-
-                      return Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
-
-                        children: [
-
-                          CircleAvatar(
-                            radius: 25.r,
-                            backgroundColor:
-                            Colors.white,
-
-                            backgroundImage:
-                            photoUrl != null &&
-                                photoUrl
-                                    .toString()
-                                    .isNotEmpty
-                                ? NetworkImage(
-                              photoUrl,
-                            )
-                                : null,
-
-                            child: photoUrl == null ||
-                                photoUrl
-                                    .toString()
-                                    .isEmpty
-                                ? Text(
-                              initials.isEmpty
-                                  ? "U"
-                                  : initials,
-
-                              style: TextStyle(
-                                fontSize: 18.sp,
-                                fontWeight:
-                                FontWeight.bold,
-                                color: app_colors
-                                    .black,
-                              ),
-                            )
-                                : null,
-                          ),
-
-                          SizedBox(height: 10.h),
-
-                          Text(
-                            fullName.isEmpty
-                                ? "User"
-                                : fullName,
-
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontSize: 16.sp,
-                              fontFamily:
-                              app_fonts.Medium,
-                            ),
-                          ),
-
-                          SizedBox(height: 2.h),
-
-                          Text(
-                            email,
-
+                  CircleAvatar(
+                    radius: 25.r,
+                    backgroundColor: Colors.white,
+                    backgroundImage:
+                    photoUrl != null && photoUrl.toString().isNotEmpty
+                        ? NetworkImage(photoUrl)
+                        : null,
+                    child: photoUrl == null || photoUrl.toString().isEmpty
+                        ? Text(
+                      initials.isEmpty ? 'U' : initials,
+                      style: TextStyle(
+                        fontSize: 18.sp,
+                        fontWeight: FontWeight.bold,
+                        color: app_colors.black,
+                      ),
+                    )
+                        : null,
+                  ),
+                  SizedBox(height: 10.h),
+                  Text(
+                    fullName.isEmpty ? 'User' : fullName,
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 16.sp,
+                      fontFamily: app_fonts.Medium,
+                    ),
+                  ),
+                  SizedBox(height: 2.h),
+                  Text(
+                    email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontSize: 10.sp,
+                      fontFamily: app_fonts.Regular,
+                    ),
+                  ),
+                  // Company name below email
+                  if (companyDisplayName.isNotEmpty) ...[
+                    SizedBox(height: 4.h),
+                    Row(
+                      children: [
+                        Icon(Icons.business_outlined,
+                            size: 11.sp, color: Colors.black45),
+                        SizedBox(width: 4.w),
+                        Expanded(
+                          child: Text(
+                            companyDisplayName,
                             maxLines: 1,
-                            overflow:
-                            TextOverflow.ellipsis,
-
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: Colors.black54,
-                              fontSize: 10.sp,
-                              fontFamily:
-                              app_fonts.Regular,
+                              fontSize: 11.sp,
+                              fontFamily: app_fonts.Medium,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                        ],
-                      );
-                    },
-                  ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
 
-          // Divider line
+          if (_companies.isNotEmpty) ...[
+            _CompanySwitcherSection(
+              companies: _companies,
+              activeCompanyId: _activeCompanyId,
+              loading: _loadingCompanies || _switching,
+              onSwitch: _switchTo,
+            ),
+          ],
+
           Container(
             width: double.infinity,
             height: 1,
             color: Colors.grey.shade400,
           ),
 
+          // ── Menu Items ────────────────────────────────────────────
           Expanded(
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Customers
                   _buildTile(
                     icon: Icons.people_outline,
-                    label: "Customers",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CustomerScreen()),
-                      );
-                    },
+                    label: 'Customers',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const CustomerScreen())),
                   ),
-
-                  //Suppliers
                   _buildTile(
-                    icon: Icons.people_outline,
-                    label: "Suppliers",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SupplierScreen()),
-                      );
+                    icon: Icons.local_shipping_outlined,
+                    label: 'Suppliers',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const SupplierScreen())),
+                  ),
+                  _buildTile(
+                    icon: Icons.business_outlined,
+                    label: 'Companies',
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const CompanyScreen()));
+                      _fetchCompanies();
                     },
                   ),
-
-                  // // Warehouse
-                  // _buildTile(
-                  //   icon: Icons.warehouse_outlined,
-                  //   label: "Warehouse",
-                  //   onTap: () {
-                  //     Navigator.push(
-                  //       context,
-                  //       MaterialPageRoute(builder: (_) => const WarehouseScreen()),
-                  //     );
-                  //   },
-                  // ),
-
-                  // Subscription
                   _buildTile(
                     icon: Icons.workspace_premium_rounded,
-                    label: "Subscription",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SubscriptionScreen()),
-                      );
-                    },
+                    label: 'Subscription',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const SubscriptionScreen())),
                   ),
-
-                  // Profile
                   _buildTile(
                     icon: Icons.person_outline,
-                    label: "Profile",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                      );
-                    },
+                    label: 'Profile',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const ProfileScreen())),
                   ),
-
-                  // Settings
-                  // _buildTile(
-                  //   icon: Icons.settings_outlined,
-                  //   label: "Settings",
-                  //   onTap: () {
-                  //     Navigator.push(
-                  //       context,
-                  //       MaterialPageRoute(builder: (_) => const SettingScreen()),
-                  //     );
-                  //   },
-                  // ),
-
-                  // Backup Now
                   _buildTile(
                     icon: Icons.backup_outlined,
-                    label: "Backup Now",
+                    label: 'Backup Now',
                     onTap: () => _manualBackup(context),
                   ),
-
-                  // Restore Data
                   _buildTile(
                     icon: Icons.restore_outlined,
-                    label: "Restore Data",
+                    label: 'Restore Data',
                     onTap: () => _restoreData(context),
                   ),
-
-                  // Privacy Policy
-                  _buildTile(
-                    icon: Icons.privacy_tip_outlined,
-                    label: "Privacy Policy",
-                    onTap: () {
-                      _showPrivacyPolicy(context);
-                    },
-                  ),
-
-                  // Terms & Conditions
-                  _buildTile(
-                    icon: Icons.description_outlined,
-                    label: "Terms & Conditions",
-                    onTap: () {
-                      _showTermsConditions(context);
-                    },
-                  ),
-
-                  // Contact Us
                   _buildTile(
                     icon: Icons.contact_support_outlined,
-                    label: "Contact Us",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ContactUsScreen()),
-                      );
-                    },
+                    label: 'Contact Us',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const ContactUsScreen())),
                   ),
-
-// Feedback
                   _buildTile(
                     icon: Icons.star_outline,
-                    label: "Feedback",
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const FeedbackScreen()),
-                      );
-                    },
+                    label: 'Feedback',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const FeedbackScreen())),
                   ),
-
-                  // Logout Option (Red Color)
                   _buildLogoutTile(context),
                 ],
               ),
@@ -357,7 +510,6 @@ class _AppSideBarState extends State<AppSideBar> {
     );
   }
 
-  // Simple tile widget
   Widget _buildTile({
     required IconData icon,
     required String label,
@@ -380,15 +532,14 @@ class _AppSideBarState extends State<AppSideBar> {
     );
   }
 
-  // Logout Tile (Red Color)
   Widget _buildLogoutTile(BuildContext context) {
     return ListTile(
       leading: Padding(
         padding: EdgeInsets.symmetric(horizontal: 2.w),
-        child: Icon(Icons.logout, color: Colors.red, size: 20),
+        child: const Icon(Icons.logout, color: Colors.red, size: 20),
       ),
       title: Text(
-        "Logout",
+        'Logout',
         style: TextStyle(
           fontSize: 14.sp,
           fontFamily: app_fonts.Regular,
@@ -399,281 +550,100 @@ class _AppSideBarState extends State<AppSideBar> {
       onTap: () => _logout(context),
     );
   }
+}
 
-  // Logout Method
-  void _logout(BuildContext context) async {
-    // Show confirmation dialog
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Logout'),
-          ),
-        ],
-      ),
-    );
+// ── Company Switcher Section ──────────────────────────────────────
+class _CompanySwitcherSection extends StatelessWidget {
+  final List<CompanyModel> companies;
+  final String? activeCompanyId;
+  final bool loading;
+  final Future<void> Function(String?) onSwitch;
 
-    if (confirm != true) return;
+  const _CompanySwitcherSection({
+    required this.companies,
+    required this.activeCompanyId,
+    required this.loading,
+    required this.onSwitch,
+  });
 
-    // Show loading
-    if (!mounted) return;
-
-    // Loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const AlertDialog(
-        content: Row(children: [
-          CircularProgressIndicator(),
-          SizedBox(width: 16),
-          Expanded(child: Text('Saving data & logging out...')),
-        ]),
-      ),
-    );
-
-    try {
-      // ── 1. BACKUP — logout se pehle guaranteed upload ─────────────
-      final backupOk = await FirebaseSyncService.uploadBeforeLogout();
-      if (!backupOk) {
-        print('⚠️ Backup could not be uploaded — proceeding with logout anyway');
-      }
-
-      // ── 2. WIPE local SQLite ──────────────────────────────────────
-      await AppDatabase.instance.clearAllData();
-
-      // ── 3. Clear user session ─────────────────────────────────────
-      FirebaseSyncService.setCurrentUser('');
-
-      // ── 4. Firebase sign out ──────────────────────────────────────
-      await FirebaseAuth.instance.signOut();
-
-      // Close loading dialog
-      if (mounted && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-
-      // Navigate to auth screen — remove ALL previous routes
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const AuthScreen()),
-              (route) => false,
-        );
-      }
-    } catch (e) {
-      // Close loading dialog
-      if (mounted && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Logout failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  // Manual Backup
-  void _manualBackup(BuildContext context) async {
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 20),
-            Text('Uploading backup...'),
-          ],
-        ),
-      ),
-    );
-
-    final success = await FirebaseSyncService.uploadDatabase();
-
-    // Close loading dialog
-    if (navigator.canPop()) {
-      navigator.pop();
-    }
-
-    if (success) {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(content: Text('✅ Backup completed successfully!')),
-      );
-    } else {
-      scaffoldMessenger.showSnackBar(
-        const SnackBar(
-          content: Text('❌ Backup failed. Check your internet connection.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // Restore Data
-  void _restoreData(BuildContext context) async {
-    final info = await FirebaseSyncService.getBackupInfo();
-
-    if (info == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No backup found in cloud')),
-      );
-      return;
-    }
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Restore Data'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Are you sure you want to restore from cloud backup?'),
-            SizedBox(height: 10.h),
-            Text('Last backup: ${info['lastModified']?.toString().split(' ')[0] ?? 'Unknown'}'),
-            Text('Size: ${(info['size'] / 1024).toStringAsFixed(2)} KB'),
-            SizedBox(height: 10.h),
-            const Text('⚠️ This will replace all current data!',
-                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Restore'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      // Show loading
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Row(
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: app_colors.table_header_bg,
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 20),
-              Text('Restoring data...'),
+              Icon(Icons.business_outlined, size: 13.sp, color: Colors.black54),
+              SizedBox(width: 5.w),
+              Text(
+                'Active Company',
+                style: TextStyle(
+                  fontSize: 11.sp,
+                  color: Colors.black54,
+                  fontFamily: app_fonts.Regular,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              if (loading) ...[
+                const Spacer(),
+                SizedBox(
+                  width: 12.w, height: 12.h,
+                  child: const CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.black54),
+                ),
+              ],
             ],
           ),
-        ),
-      );
-
-      final success = await FirebaseSyncService.downloadDatabase();
-
-      // Close loading dialog
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Data restored! Restarting app...')),
-        );
-        await Future.delayed(const Duration(seconds: 1));
-        // Restart the app
-        Navigator.pushReplacementNamed(context, '/');
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('❌ Restore failed'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  // Privacy Policy Dialog
-  void _showPrivacyPolicy(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Privacy Policy'),
-        content: SingleChildScrollView(
-          child: Text(
-            'Privacy Policy\n\n'
-                'Last updated: ${DateTime.now().year}\n\n'
-                '1. Information Collection\n'
-                '   We collect business information including customer details, '
-                'sales data, and inventory information to provide our services.\n\n'
-                '2. Data Usage\n'
-                '   Your data is stored locally on your device. We do not share '
-                'your data with third parties without your consent.\n\n'
-                '3. Security\n'
-                '   We implement security measures to protect your data from '
-                'unauthorized access.\n\n'
-                '4. Your Rights\n'
-                '   You have the right to access, modify, or delete your data '
-                'at any time.\n\n'
-                'For any questions, contact us at apnaca786@gmail.com',
-            style: TextStyle(fontSize: 12.sp),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Terms & Conditions Dialog
-  void _showTermsConditions(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Terms & Conditions'),
-        content: SingleChildScrollView(
-          child: Text(
-            'Terms & Conditions\n\n'
-                'Last updated: ${DateTime.now().year}\n\n'
-                '1. Acceptance of Terms\n'
-                '   By using Apna Hisab, you agree to these terms and conditions.\n\n'
-                '2. Use of Service\n'
-                '   You agree to use this service only for legitimate business '
-                'purposes and in compliance with applicable laws.\n\n'
-                '3. Data Ownership\n'
-                '   You retain ownership of all data you enter into the application.\n\n'
-                '4. Limitation of Liability\n'
-                '   We are not liable for any business losses arising from the '
-                'use of this application.\n\n'
-                '5. Modifications\n'
-                '   We reserve the right to modify these terms at any time.\n\n'
-                '6. Termination\n'
-                '   We may terminate or suspend access to our service immediately '
-                'for violations of these terms.\n\n'
-                'For questions, contact: apnaca786@gmail.com',
-            style: TextStyle(fontSize: 12.sp),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+          SizedBox(height: 8.h),
+          Wrap(
+            spacing: 6.w,
+            runSpacing: 6.h,
+            children: companies.map((company) {
+              final isActive = company.id == activeCompanyId;
+              return GestureDetector(
+                onTap: (loading || isActive) ? null : () => onSwitch(company.id),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.black : Colors.white,
+                    borderRadius: BorderRadius.circular(20.r),
+                    border: Border.all(
+                      color: isActive ? Colors.black : Colors.grey.shade400,
+                      width: isActive ? 1.5 : 1,
+                    ),
+                    boxShadow: isActive
+                        ? [BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2))]
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isActive) ...[
+                        Icon(Icons.check, size: 12.sp, color: Colors.white),
+                        SizedBox(width: 4.w),
+                      ],
+                      Text(
+                        company.name,
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: isActive ? Colors.white : Colors.black87,
+                          fontFamily: isActive ? app_fonts.Medium : app_fonts.Regular,
+                          fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),

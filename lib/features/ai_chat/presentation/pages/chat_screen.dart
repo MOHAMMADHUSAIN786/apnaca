@@ -199,6 +199,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (_, state) {
         List<ChatMessage> msgs = [];
         if (state is ChatLoading) msgs = state.messages;
+        if (state is ChatStreaming) msgs = state.messages;
         if (state is ChatSuccess) msgs = state.messages;
         if (state is ChatError) msgs = state.messages;
 
@@ -221,6 +222,8 @@ class _ChatScreenState extends State<ChatScreen> {
               detailCard: msg.detailCard,
               isCustomerNotFound: msg.isCustomerNotFound,
               isSubscriptionRequired: msg.isSubscriptionRequired,
+              pendingActions: msg.pendingActions,
+              conversationId: msg.conversationId,
             );
           },
         );
@@ -489,6 +492,8 @@ class _AiBubble extends StatelessWidget {
   final Map<String, dynamic>? detailCard;
   final bool isCustomerNotFound;
   final bool isSubscriptionRequired;
+  final List<PendingAiAction>? pendingActions;
+  final String? conversationId;
 
   const _AiBubble({
     required this.text,
@@ -496,6 +501,8 @@ class _AiBubble extends StatelessWidget {
     this.detailCard,
     this.isCustomerNotFound = false,
     this.isSubscriptionRequired = false,
+    this.pendingActions,
+    this.conversationId,
   });
 
   @override
@@ -562,6 +569,15 @@ class _AiBubble extends StatelessWidget {
               _SubscriptionUpgradeCard(),
             ],
 
+            // Destructive AI action → in-chat confirm
+            if (pendingActions != null && pendingActions!.isNotEmpty) ...[
+              SizedBox(height: 8.h),
+              _ConfirmActionsCard(
+                actions: pendingActions!,
+                conversationId: conversationId,
+              ),
+            ],
+
             // Customer not found → customer list table
             if (isCustomerNotFound && tableData != null && tableData!.isNotEmpty) ...[
               SizedBox(height: 8.h),
@@ -587,6 +603,87 @@ class _AiBubble extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─── Destructive AI action — in-chat confirm ──────────────────────
+
+class _ConfirmActionsCard extends StatelessWidget {
+  final List<PendingAiAction> actions;
+  final String? conversationId;
+
+  const _ConfirmActionsCard({required this.actions, this.conversationId});
+
+  void _decide(BuildContext context, bool approved) {
+    context.read<ChatBloc>().add(ConfirmAiActionsEvent(
+          actions: actions,
+          conversationId: conversationId,
+          approved: approved,
+        ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF1F1),
+        border: Border.all(color: const Color(0xFFFFCDD2)),
+        borderRadius: BorderRadius.circular(12.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  size: 16.sp, color: Colors.red[700]),
+              SizedBox(width: 6.w),
+              Text('Confirm karein',
+                  style: TextStyle(
+                      fontSize: 13.sp,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.red[700])),
+            ],
+          ),
+          SizedBox(height: 6.h),
+          ...actions.map((a) => Padding(
+                padding: EdgeInsets.symmetric(vertical: 2.h),
+                child: Text('• ${a.label}',
+                    style: TextStyle(fontSize: 13.sp, color: app_colors.title)),
+              )),
+          SizedBox(height: 10.h),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _decide(context, false),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: app_colors.title,
+                    side: BorderSide(color: Colors.grey[400]!),
+                    padding: EdgeInsets.symmetric(vertical: 8.h),
+                  ),
+                  child: Text('Nahi', style: TextStyle(fontSize: 13.sp)),
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _decide(context, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFDC2626),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: EdgeInsets.symmetric(vertical: 8.h),
+                  ),
+                  child: Text('Haan, karo', style: TextStyle(fontSize: 13.sp)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

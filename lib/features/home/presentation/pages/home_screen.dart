@@ -3,14 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-import '../../../../core/constants/app_status_bar.dart';
+import '../../../../core/widgets/common_widgets/app_status_bar.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_fonts.dart';
 import '../../../../database/app_database.dart';
 import '../bloc/home_bloc.dart';
 import '../widgets/app_home_container.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final VoidCallback? onAiAssistantTap;
+
+  const HomeScreen({super.key, this.onAiAssistantTap});
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -99,6 +102,16 @@ class HomeScreenState extends State<HomeScreen> {
                             top: 18,
                             left: 8,
                             right: 8),
+                        child: _AiAssistantCard(
+                          onTap: widget.onAiAssistantTap,
+                        ),
+                      ),
+
+                      Padding(
+                        padding: const EdgeInsets.only(
+                            top: 18,
+                            left: 8,
+                            right: 8),
                         child: AppHomeContainer(
                           title: "You'll Receive",
                           icon: Icons.arrow_upward,
@@ -176,30 +189,7 @@ class HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
 
-                      Padding(
-                        padding: const EdgeInsets.only(
-                            top: 18,
-                            left: 8,
-                            right: 8,
-                            bottom: 48),
-                        child: AppHomeContainer(
-                          title: "Expense",
-                          icon: Icons.wallet,
-                          iconColor:
-                          app_colors.OrangeColor,
-                          iconBackgroundColor:
-                          app_colors.LightOrange,
-                          amount: state.totalExpense,
-                          thisMonthAmount:
-                          state.expenseThisMonth,
-                          lastMonthAmount:
-                          state.expenseLastMonth,
-                          percentageChange:
-                          state.percentageChangeExpense,
-                        ),
-                      ),
-
-                      const SizedBox(height: 80),
+                      const SizedBox(height: 20),
                     ],
                   ),
                 );
@@ -207,6 +197,190 @@ class HomeScreenState extends State<HomeScreen> {
 
               return const SizedBox.shrink();
             },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+//  AI ASSISTANT CARD — Same structure/colors as AppHomeContainer:
+//  outer Dbackgroun_color box → inner white card (title + icon
+//  badge) → light Dbackgroun_color footer with quick-prompt chips.
+// ────────────────────────────────────────────────────────────────
+class _AiAssistantCard extends StatelessWidget {
+  final VoidCallback? onTap;
+
+  const _AiAssistantCard({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: app_colors.Dbackgroun_color,
+        border: Border.all(color: app_colors.Dborder_color),
+        borderRadius: BorderRadius.circular(10.r),
+      ),
+      child: Column(
+        children: [
+          /// Inner white box — tappable, opens chat
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10.r),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10.r),
+              onTap: onTap,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: app_colors.Dborder_color),
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38.w,
+                      height: 38.h,
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: app_colors.LightBlue,
+                        borderRadius: BorderRadius.circular(6.r),
+                      ),
+                      child: Icon(
+                        Icons.auto_awesome,
+                        color: app_colors.c_primary,
+                        size: 18,
+                      ),
+                    ),
+                    SizedBox(width: 10.w),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                "AI Assistant",
+                                style: TextStyle(
+                                  fontSize: 14.sp,
+                                  color: Colors.black,
+                                  fontFamily: app_fonts.Regular,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              SizedBox(width: 6.w),
+                              Container(
+                                padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 1.h),
+                                decoration: BoxDecoration(
+                                  color: app_colors.LightOrange,
+                                  border: Border.all(color: app_colors.OrangeColor),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  "NEW",
+                                  style: TextStyle(
+                                    fontSize: 8.sp,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.5,
+                                    fontFamily: app_fonts.Medium,
+                                    color: app_colors.OrangeColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 2.h),
+                          Text(
+                            "Ask about your business.",
+                            style: TextStyle(
+                              fontSize: 11.sp,
+                              fontFamily: app_fonts.Regular,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 30.w,
+                      height: 30.h,
+                      decoration: BoxDecoration(
+                        color: app_colors.LightBlue,
+                        borderRadius: BorderRadius.circular(8.r),
+                      ),
+                      child: Icon(Icons.arrow_forward_rounded, color: app_colors.c_primary, size: 16),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          SizedBox(height: 8.h),
+
+          /// Quick-prompt chips section — same look as "Monthly Summary"
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            decoration: BoxDecoration(
+              color: app_colors.Dbackgroun_color,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: _AiSuggestionChip(icon: Icons.inventory_2_outlined, label: "Stock check", onTap: onTap)),
+                SizedBox(width: 8.w),
+                Expanded(child: _AiSuggestionChip(icon: Icons.bar_chart_rounded, label: "Today sale", onTap: onTap)),
+                SizedBox(width: 8.w),
+                Expanded(child: _AiSuggestionChip(icon: Icons.receipt_long_outlined, label: "Make Bill", onTap: onTap)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Small pill-shaped quick-prompt chip used inside the AI card ───
+class _AiSuggestionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _AiSuggestionChip({required this.icon, required this.label, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8.r),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8.r),
+        onTap: onTap,
+        child: Container(
+          padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 6.w),
+          decoration: BoxDecoration(
+            border: Border.all(color: app_colors.Dborder_color),
+            borderRadius: BorderRadius.circular(8.r),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, size: 16, color: app_colors.c_primary),
+              SizedBox(height: 4.h),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5.sp,
+                  fontFamily: app_fonts.Regular,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
           ),
         ),
       ),

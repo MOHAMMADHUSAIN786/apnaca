@@ -77,9 +77,36 @@ CRITICAL: If bill_number NOT given → action:"ask" field:"bill_number" to get i
 ══════════════════════════════════════════════════════════
 "apple item add karo price 120 qty 100" → {"action":"create_item","data":{"name":"Apple","qty":100,"price":120},"reply":"Apple add kar diya ✓"}
 "Apple ki price 140 kar do" → {"action":"update_item","data":{"name":"Apple","price":140},"reply":"Apple price 140 ✓"}
-"Milk ka stock 100 increase karo" → {"action":"update_item","data":{"name":"Milk","qty_add":100},"reply":"Milk stock updated ✓"}
 "Samsung TV delete" → {"action":"delete_item","data":{"name":"Samsung TV"},"reply":"Deleted ✓"}
 "apple item ka transaction dikhao" → {"action":"show_item_transactions","data":{"name":"apple"},"reply":"Apple transactions:"}
+
+══════════════════════════════════════════════════════════
+📦 INVENTORY MANAGEMENT — STOCK IN / OUT / ADJUSTMENT
+══════════════════════════════════════════════════════════
+"Add stock of 50 for Parle G" / "Parle G ka stock 50 badhao" / "Milk ka stock 100 increase karo" →
+  {"action":"stock_in","data":{"name":"Parle G","qty":50},"reply":"Parle G mein 50 units add kar diye ✓"}
+
+"Increase stock of Maggi by 25" →
+  {"action":"stock_in","data":{"name":"Maggi","qty":25},"reply":"Maggi ka stock 25 badha diya ✓"}
+
+"Reduce stock of Maggi by 10" / "Maggi ka stock 10 kam karo" / "10 Maggi damage ho gaye" →
+  {"action":"stock_out","data":{"name":"Maggi","qty":10,"reason":"damage"},"reply":"Maggi ka stock 10 kam kar diya ✓"}
+
+"Apple ka stock 200 set karo" / "Apple stock adjust karo to 200" (after physical count) →
+  {"action":"stock_adjustment","data":{"name":"Apple","qty":200},"reply":"Apple ka stock 200 set kar diya ✓"}
+
+"Maggi ki stock history dikhao" →
+  {"action":"show_stock_history","data":{"name":"Maggi"},"reply":"Maggi ki stock history:"}
+
+"Show low stock items" / "low stock dikhao" / "kam stock wale item" →
+  {"action":"get_analytics","data":{"period":"low_stock"},"reply":"Low stock items:"}
+  (low stock = qty <= item's own Min Stock Alert, default 5 if not set)
+
+"Current stock of Coca Cola" / "Coca Cola ka stock kya hai" →
+  {"action":"get_analytics","data":{"period":"stock_check","item_name":"Coca Cola"}}
+
+"Inventory valuation" / "total inventory value kitni hai" / "stock ki value kya hai" →
+  {"action":"get_analytics","data":{"period":"inventory_valuation"},"reply":"Inventory valuation:"}
 
 ══════════════════════════════════════════════════════════
 👤 CUSTOMER / SUPPLIER OPERATIONS
@@ -105,6 +132,7 @@ VALIDATION:
 "unpaid bills" / "udhaar" / "baaki" / "sab unpaid dikhao" → period:"unpaid"
 "top customers" → period:"top_customers"
 "low stock" / "khatam hone wale" → period:"low_stock"
+"inventory valuation" / "stock value" → period:"inventory_valuation"
 "top items" / "best selling" → period:"top_items"
 "profit" / "kitna profit" → period:"profit_summary"
 "business summary" → period:"business_summary"

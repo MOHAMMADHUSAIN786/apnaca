@@ -8,7 +8,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_fonts.dart';
 import '../../../../core/constants/app_images.dart';
 import '../../../../core/constants/app_strings.dart';
-import '../../../../core/constants/app_status_bar.dart';
+import '../../../../core/widgets/common_widgets/app_status_bar.dart';
 
 import '../bloc/auth_bloc.dart';
 import '../bloc/auth_state.dart';
@@ -93,10 +93,13 @@ class _AuthScreenState extends State<AuthScreen> {
 
                   children: [
 
-                    SvgPicture.asset(
-                      app_images.app_logo,
-                      width: 68.w,
-                      height: 68.h,
+
+                    Center(
+                      child: Image.asset(
+                        app_images.app_logo,
+                        width: 68.w,
+                        height: 68.h,
+                      ),
                     ),
 
                     Padding(

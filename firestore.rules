@@ -1,0 +1,163 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ApnaCA — Firestore security rules  (DEPLOY-NOW / interim)
+//
+//  This version is safe to deploy immediately — it closes every cross-tenant
+//  READ and keeps existing app flows working.
+//
+//  Two things are marked INTERIM and get tightened once the Agent Gateway is
+//  live (see server/DEPLOY.md):
+//    1. subscriptions/{uid} write  → becomes webhook-only (client can't grant
+//       itself a plan). Cannot lock this yet or plan purchase breaks.
+//    2. users list  → the single-doc email lookup for team invites moves
+//       server-side; then this `list` rule is dropped.
+//
+//  ⚠️ TEST BEFORE DEPLOY:  cd firebase-tests && npm test
+//     firebase deploy --only firestore:rules,storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function isUser(uid)  { return isSignedIn() && request.auth.uid == uid; }
+
+    // TODO: move admin to a custom claim (request.auth.token.admin == true).
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'admin@gmail.com';
+    }
+
+    function teamAccessDoc() {
+      return get(/databases/$(database)/documents/team_access/$(request.auth.uid)).data;
+    }
+    function hasTeamAccess() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/team_access/$(request.auth.uid));
+    }
+    function isTeamMemberOf(ownerUid) {
+      return hasTeamAccess() && teamAccessDoc().ownerUid == ownerUid;
+    }
+    function companyOwner(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid;
+    }
+
+    // ── users ────────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow get: if isUser(uid) || isAdmin() || isTeamMemberOf(uid);
+
+      // INTERIM: allow a constrained single-doc email lookup (TeamService uses
+      // .limit(1)); bulk enumeration of all users is blocked. Admin may list all.
+      allow list: if isAdmin()
+        || (isSignedIn() && request.query.limit != null && request.query.limit <= 1);
+
+      allow create, update: if isUser(uid)
+        || (isSignedIn() && request.resource.data.get('is_team_member', false) == true);
+      allow delete: if isAdmin();
+
+      match /AI_CHAT/{document=**} {
+        allow read, write: if isUser(uid);
+      }
+      match /items/{itemId} {
+        allow read, write: if isUser(uid) || isAdmin();
+      }
+    }
+
+    // ── ai_queries (legacy per-user shape) ───────────────────────────────────
+    match /ai_queries/{uid} {
+      allow read, write: if isUser(uid) || isAdmin();
+      match /logs/{logId} {
+        allow read, write: if isUser(uid) || isAdmin();
+      }
+    }
+
+    // ── subscriptions ────────────────────────────────────────────────────────
+    // ⚠️ PHASE B (after the Razorpay webhook is live) — replace the `write` line
+    //    below with:
+    //      allow create: if isUser(uid)
+    //        && (!('plan' in request.resource.data) || request.resource.data.plan == 'free');
+    //      allow update: if isUser(uid)
+    //        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+    //             'plan','billing_cycle','expiry_date',
+    //             'razorpay_payment_id','razorpay_order_id','activated_at']);
+    //      allow delete: if isAdmin();
+    match /subscriptions/{uid} {
+      allow read:  if isUser(uid) || isAdmin() || isTeamMemberOf(uid);
+      allow write: if isUser(uid);   // INTERIM — see PHASE B above
+    }
+
+    // ── write-only client telemetry / support ────────────────────────────────
+    match /ai_error_logs/{docId} {
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+    match /contact_queries/{docId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if isAdmin();
+    }
+    match /feedbacks/{docId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ── companies ────────────────────────────────────────────────────────────
+    match /companies/{companyId} {
+      allow read: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid
+        || isTeamMemberOf(resource.data.ownerUid)
+        || isAdmin()
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid;
+
+      match /members/{memberId} {
+        allow read: if isSignedIn() && (
+          companyOwner(companyId) == request.auth.uid
+          || resource.data.memberUid == request.auth.uid
+          || isAdmin()
+        );
+        allow write: if isSignedIn()
+          && companyOwner(companyId) == request.auth.uid;
+      }
+
+      // Legacy path referenced by CompanyService.deleteCompany.
+      match /team_members/{memberId} {
+        allow read, write: if isSignedIn()
+          && companyOwner(companyId) == request.auth.uid;
+      }
+    }
+
+    // collectionGroup('members') email lookup (TeamService.activatePendingInvite).
+    match /{path=**}/members/{memberId} {
+      allow read: if isSignedIn()
+        && resource.data.memberEmail == request.auth.token.email;
+    }
+
+    // ── team_access ──────────────────────────────────────────────────────────
+    match /team_access/{memberUid} {
+      allow read: if isUser(memberUid)
+        || isAdmin()
+        || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create, update: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isAdmin()
+        || (isSignedIn()
+            && (resource.data.ownerUid == request.auth.uid
+                || request.auth.uid == memberUid));
+    }
+
+    // ── legacy Firestore "databases" path (kept scoped in case it is used) ────
+    match /databases/{uid}/{document=**} {
+      allow read, write: if isUser(uid) || isAdmin();
+      allow read: if isTeamMemberOf(uid);
+    }
+
+    // ── default deny ─────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

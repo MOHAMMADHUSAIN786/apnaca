@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/permission_service.dart';
 import '../../../../database/app_database.dart';
 import '../../../item/model/item_model.dart';
 import '../../model/customer_model.dart';
@@ -366,17 +367,19 @@ class _CustomerScreenState extends State<CustomerScreen> {
           style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.w600, color: app_colors.title),
         ),
       ),
-      floatingActionButton: Padding(
+      floatingActionButton: PermissionService.instance.canManageCustomers
+          ? Padding(
         padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
         child: FloatingActionButton(
-          heroTag: 'fab_item',
+          heroTag: 'fab_customer',
           onPressed: () async {
             _showAddCustomerDialog(context);
           },
           backgroundColor: app_colors.table_header_bg,
           child: Icon(Icons.add, color: app_colors.black),
         ),
-      ),
+      )
+          : null,
       body: _buildBody(),
     );
   }
@@ -423,4 +426,3 @@ class _CustomerScreenState extends State<CustomerScreen> {
     );
   }
 }
-

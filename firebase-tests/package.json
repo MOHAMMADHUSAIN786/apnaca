@@ -1,0 +1,17 @@
+{
+  "name": "apnaca-firebase-rules-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --project apnaca-test --only firestore,storage \"npx vitest run\"",
+    "test:watch": "firebase emulators:exec --project apnaca-test --only firestore,storage \"npx vitest\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.1.0",
+    "firebase-tools": "^15.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

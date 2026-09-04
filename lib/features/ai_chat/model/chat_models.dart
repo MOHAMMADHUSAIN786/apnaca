@@ -9,6 +9,10 @@ class ChatMessage {
   final StockIssue? stockIssue;
   final bool isSubscriptionRequired;
 
+  /// Destructive AI actions awaiting the user's yes/no in the chat bubble.
+  final List<PendingAiAction>? pendingActions;
+  final String? conversationId;
+
   const ChatMessage({
     required this.role,
     required this.content,
@@ -17,9 +21,42 @@ class ChatMessage {
     this.isCustomerNotFound = false,
     this.stockIssue,
     this.isSubscriptionRequired = false,
+    this.pendingActions,
+    this.conversationId,
   });
 
   Map<String, dynamic> toJson() => {'role': role, 'content': content};
+
+  ChatMessage copyWith({String? content, bool clearPendingActions = false}) =>
+      ChatMessage(
+        role: role,
+        content: content ?? this.content,
+        tableData: tableData,
+        detailCard: detailCard,
+        isCustomerNotFound: isCustomerNotFound,
+        stockIssue: stockIssue,
+        isSubscriptionRequired: isSubscriptionRequired,
+        pendingActions: clearPendingActions ? null : pendingActions,
+        conversationId: conversationId,
+      );
+}
+
+/// A write/destructive action the gateway proposed that needs explicit user
+/// confirmation before the client applies it to local SQLite.
+class PendingAiAction {
+  final String id;
+  final String tool;
+  final Map<String, dynamic> args;
+
+  /// Human-readable one-liner, e.g. "Delete item \"Apple\"".
+  final String label;
+
+  const PendingAiAction({
+    required this.id,
+    required this.tool,
+    required this.args,
+    required this.label,
+  });
 }
 
 class StockIssue {
@@ -41,6 +78,8 @@ enum StockIssueType { zero, insufficient }
 enum AiActionType {
   // Items
   createItem, updateItem, deleteItem, listItems, showItemDetail, showItemTransactions,
+  // Inventory Management
+  stockIn, stockOut, stockAdjustment, showStockHistory,
   // Customers
   createCustomer, updateCustomer, deleteCustomer, listCustomers, showCustomerDetail,
   // Suppliers
@@ -78,6 +117,7 @@ enum ActionResultType {
   stockInsufficient,
   stockZero,
   subscriptionRequired,
+  confirmRequired,
   error,
 }
 
@@ -92,6 +132,8 @@ class ActionResult {
   final String? searchedSupplierName;
   final BillCreationState? initialBillState;
   final StockIssue? stockIssue;
+  final List<PendingAiAction>? pendingActions;
+  final String? conversationId;
 
   const ActionResult._({
     required this.type,
@@ -104,7 +146,25 @@ class ActionResult {
     this.searchedSupplierName,
     this.initialBillState,
     this.stockIssue,
+    this.pendingActions,
+    this.conversationId,
   });
+
+  factory ActionResult.confirmRequired({
+    required String reply,
+    required List<PendingAiAction> pendingActions,
+    String? conversationId,
+    List<Map<String, dynamic>>? tableData,
+    Map<String, dynamic>? detailCard,
+  }) =>
+      ActionResult._(
+        type: ActionResultType.confirmRequired,
+        reply: reply,
+        pendingActions: pendingActions,
+        conversationId: conversationId,
+        tableData: tableData,
+        detailCard: detailCard,
+      );
 
   factory ActionResult.success({
     required String reply,

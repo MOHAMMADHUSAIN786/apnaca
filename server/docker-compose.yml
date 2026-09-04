@@ -1,0 +1,20 @@
+# Local Postgres for development only.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: apnaca
+      POSTGRES_PASSWORD: apnaca
+      POSTGRES_DB: apnaca_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - agent_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apnaca -d apnaca_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  agent_pgdata:

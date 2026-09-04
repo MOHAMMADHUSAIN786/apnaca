@@ -1,9 +1,13 @@
+// lib/features/item/presentation/pages/item_screen.dart
+// UPDATED: FAB guarded with canManageItems permission
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:lottie/lottie.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/permission_service.dart'; // ← NEW
 import '../../../../database/app_database.dart';
 import '../../model/item_model.dart';
 import '../bloc/item_bloc.dart';
@@ -31,237 +35,135 @@ class ItemScreenState extends State<ItemScreen> {
     super.dispose();
   }
 
-  // Method to refresh items
   void refreshItems() {
     if (!mounted) return;
-
     _itemBloc.add(FetchItems());
   }
+
   Future<void> _showAddItemDialog(BuildContext context) async {
-
-    final nameController = TextEditingController();
-    final qtyController = TextEditingController();
+    final nameController  = TextEditingController();
+    final qtyController   = TextEditingController();
     final priceController = TextEditingController();
-    final hsnController = TextEditingController();
-
+    final hsnController   = TextEditingController();
+    final skuController         = TextEditingController();
+    final purchasePriceController = TextEditingController();
+    final minStockController    = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
     await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
-
         return Dialog(
           backgroundColor: Colors.transparent,
-
           child: Container(
             padding: EdgeInsets.all(18.w),
-
             decoration: BoxDecoration(
               color: app_colors.Dbackgroun_color,
               borderRadius: BorderRadius.circular(18.r),
-              border: Border.all(
-                color: app_colors.Dborder_color,
-              ),
+              border: Border.all(color: app_colors.Dborder_color),
             ),
-
             child: SingleChildScrollView(
               child: Form(
                 key: formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-
                     // HEADER
                     Row(
                       children: [
-
                         Container(
                           padding: EdgeInsets.all(10.w),
                           decoration: BoxDecoration(
                             color: Colors.blue.shade50,
-                            borderRadius:
-                            BorderRadius.circular(12.r),
+                            borderRadius: BorderRadius.circular(12.r),
                           ),
-                          child: Icon(
-                            Icons.add_box_rounded,
-                            color: app_colors.black,
-                          ),
+                          child: Icon(Icons.add_box_rounded, color: app_colors.black),
                         ),
-
                         SizedBox(width: 12.w),
-
                         Expanded(
-                          child: Text(
-                            "Add Item",
-                            style: TextStyle(
-                              fontSize: 18.sp,
-                              fontWeight: FontWeight.w600,
-                              color: app_colors.black,
-                            ),
-                          ),
+                          child: Text("Add Item",
+                              style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.w600, color: app_colors.black)),
                         ),
-
-                        InkWell(
-                          onTap: () => Navigator.pop(context),
-                          child: const Icon(Icons.close),
-                        ),
+                        InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close)),
                       ],
                     ),
-
                     SizedBox(height: 22.h),
 
-                    // ITEM NAME
-                    _buildAddField(
-                      controller: nameController,
-                      label: "Item Name",
-                      icon: Icons.inventory_2_outlined,
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return "Enter item name";
-                        }
-                        return null;
-                      },
-                    ),
-
+                    _buildAddField(controller: nameController, label: "Item Name",
+                        icon: Icons.inventory_2_outlined,
+                        validator: (v) => (v == null || v.trim().isEmpty) ? "Enter item name" : null),
+                    SizedBox(height: 14.h),
+                    _buildAddField(controller: qtyController, label: "Quantity",
+                        icon: Icons.numbers, keyboardType: TextInputType.number),
+                    SizedBox(height: 14.h),
+                    _buildAddField(controller: priceController, label: "Price",
+                        icon: Icons.currency_rupee,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true)),
+                    SizedBox(height: 14.h),
+                    _buildAddField(controller: hsnController, label: "HSN Code", icon: Icons.qr_code),
                     SizedBox(height: 14.h),
 
-                    // QTY
-                    _buildAddField(
-                      controller: qtyController,
-                      label: "Quantity",
-                      icon: Icons.numbers,
-                      keyboardType: TextInputType.number,
-                    ),
-
+                    // ── INVENTORY MANAGEMENT FIELDS ─────────────────
+                    _buildAddField(controller: skuController, label: "SKU",
+                        icon: Icons.qr_code_2_outlined),
                     SizedBox(height: 14.h),
-
-                    // PRICE
-                    _buildAddField(
-                      controller: priceController,
-                      label: "Price",
-                      icon: Icons.currency_rupee,
-                      keyboardType:
-                      const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                    ),
-
+                    _buildAddField(controller: purchasePriceController, label: "Purchase Price",
+                        icon: Icons.shopping_bag_outlined,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true)),
                     SizedBox(height: 14.h),
-
-                    // HSN
-                    _buildAddField(
-                      controller: hsnController,
-                      label: "HSN Code",
-                      icon: Icons.qr_code,
-                    ),
-
+                    _buildAddField(controller: minStockController, label: "Min Stock Alert",
+                        icon: Icons.warning_amber_outlined, keyboardType: TextInputType.number),
                     SizedBox(height: 24.h),
 
                     Row(
                       children: [
-
-                        // CANCEL
                         Expanded(
                           child: OutlinedButton(
                             style: OutlinedButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                vertical: 14.h,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius:
-                                BorderRadius.circular(12.r),
-                              ),
+                              padding: EdgeInsets.symmetric(vertical: 14.h),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
                             ),
-                            onPressed: () {
-                              Navigator.pop(context);
-                            },
-                            child: Text(
-                              "Cancel",
-                              style: TextStyle(
-                                color: app_colors.black,
-                              ),
-                            ),
+                            onPressed: () => Navigator.pop(context),
+                            child: Text("Cancel", style: TextStyle(color: app_colors.black)),
                           ),
                         ),
-
                         SizedBox(width: 12.w),
-
-                        // SAVE
                         Expanded(
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              elevation: 0,
-                              backgroundColor:
-                              app_colors.table_header_bg,
-                              padding: EdgeInsets.symmetric(
-                                vertical: 14.h,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius:
-                                BorderRadius.circular(12.r),
-                              ),
+                              elevation: 0, backgroundColor: app_colors.table_header_bg,
+                              padding: EdgeInsets.symmetric(vertical: 14.h),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
                             ),
-
                             onPressed: () async {
-
-                              if (!formKey.currentState!.validate()) {
-                                return;
-                              }
-
+                              if (!formKey.currentState!.validate()) return;
                               try {
-
                                 final item = ItemModel(
                                   name: nameController.text.trim(),
-                                  qty: int.tryParse(
-                                    qtyController.text.trim(),
-                                  ) ??
-                                      0,
-                                  price: double.tryParse(
-                                    priceController.text.trim(),
-                                  ) ??
-                                      0,
-                                  hsnCode:
-                                  hsnController.text.trim().isEmpty
-                                      ? null
-                                      : hsnController.text.trim(),
+                                  qty: int.tryParse(qtyController.text.trim()) ?? 0,
+                                  price: double.tryParse(priceController.text.trim()) ?? 0,
+                                  hsnCode: hsnController.text.trim().isEmpty
+                                      ? null : hsnController.text.trim(),
+                                  sku: skuController.text.trim().isEmpty
+                                      ? null : skuController.text.trim(),
+                                  purchasePrice: double.tryParse(purchasePriceController.text.trim()),
+                                  minStockAlert: int.tryParse(minStockController.text.trim()),
                                 );
-
-                                await AppDatabase.instance
-                                    .insertItem(item);
-
+                                await AppDatabase.instance.insertItem(item);
                                 Navigator.pop(context);
-
                                 refreshItems();
-
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      "Item added successfully",
-                                    ),
-                                  ),
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text("Item added successfully")),
                                 );
-
                               } catch (e) {
-
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                  SnackBar(
-                                    content: Text("Failed: $e"),
-                                    backgroundColor: Colors.red,
-                                  ),
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text("Failed: $e"), backgroundColor: Colors.red),
                                 );
                               }
                             },
-
-                            child: Text(
-                              "Save",
-                              style: TextStyle(
-                                color: app_colors.black,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                            child: Text("Save",
+                                style: TextStyle(color: app_colors.black, fontWeight: FontWeight.w600)),
                           ),
                         ),
                       ],
@@ -278,21 +180,26 @@ class ItemScreenState extends State<ItemScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final perm = PermissionService.instance; // ← NEW
+
     return BlocProvider.value(
       value: _itemBloc,
       child: Scaffold(
         backgroundColor: Colors.white,
-        floatingActionButton: Padding(
+
+        // ── FAB — only show if canManageItems ─────────────────
+        floatingActionButton: perm.canManageItems
+            ? Padding(
           padding: EdgeInsets.only(bottom: 18.h, right: 18.w),
           child: FloatingActionButton(
             heroTag: 'fab_item',
-            onPressed: () async {
-              _showAddItemDialog(context);
-            },
+            onPressed: () => _showAddItemDialog(context),
             backgroundColor: app_colors.table_header_bg,
             child: Icon(Icons.add, color: app_colors.black),
           ),
-        ),
+        )
+            : null,
+
         body: BlocBuilder<ItemBloc, ItemState>(
           builder: (context, state) {
             if (state is ItemLoading) {
@@ -304,15 +211,9 @@ class ItemScreenState extends State<ItemScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Lottie.asset(
-                        "assets/lottie/no_item.json",
-                        width: 200,
-                      ),
+                      Lottie.asset("assets/lottie/no_item.json", width: 200),
                       SizedBox(height: 16.h),
-                      Text(
-                        "No Items Found",
-                        style: TextStyle(fontSize: 16.sp),
-                      ),
+                      Text("No Items Found", style: TextStyle(fontSize: 16.sp)),
                     ],
                   ),
                 );
@@ -324,9 +225,8 @@ class ItemScreenState extends State<ItemScreen> {
                   final item = items[index];
                   return AppItemDesign(
                     item: item,
-                    onItemDeleted: refreshItems, // Callback for delete
-                    onItemUpdated: refreshItems, // Callback for update
-
+                    onItemDeleted: refreshItems,
+                    onItemUpdated: refreshItems,
                   );
                 },
               );
@@ -337,10 +237,7 @@ class ItemScreenState extends State<ItemScreen> {
                   children: [
                     Text('Error: ${state.message}'),
                     SizedBox(height: 16.h),
-                    ElevatedButton(
-                      onPressed: refreshItems,
-                      child: const Text('Retry'),
-                    ),
+                    ElevatedButton(onPressed: refreshItems, child: const Text('Retry')),
                   ],
                 ),
               );
@@ -353,6 +250,7 @@ class ItemScreenState extends State<ItemScreen> {
   }
 }
 
+// ── Field helper ─────────────────────────────────────────────────
 Widget _buildAddField({
   required TextEditingController controller,
   required String label,
@@ -364,41 +262,20 @@ Widget _buildAddField({
     controller: controller,
     keyboardType: keyboardType,
     validator: validator,
-
-    style: TextStyle(
-      color: app_colors.black,
-      fontSize: 14.sp,
-    ),
-
+    style: TextStyle(color: app_colors.black, fontSize: 14.sp),
     decoration: InputDecoration(
       labelText: label,
       prefixIcon: Icon(icon),
-
-      filled: true,
-      fillColor: Colors.white,
-
-      contentPadding: EdgeInsets.symmetric(
-        horizontal: 14.w,
-        vertical: 14.h,
-      ),
-
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12.r),
-      ),
-
+      filled: true, fillColor: Colors.white,
+      contentPadding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.r)),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide: BorderSide(
-          color: app_colors.Dborder_color,
-        ),
+        borderSide: BorderSide(color: app_colors.Dborder_color),
       ),
-
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12.r),
-        borderSide: BorderSide(
-          color: app_colors.table_header_bg,
-          width: 1.4,
-        ),
+        borderSide: BorderSide(color: app_colors.table_header_bg, width: 1.4),
       ),
     ),
   );

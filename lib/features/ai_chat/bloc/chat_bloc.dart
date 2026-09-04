@@ -25,6 +25,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<SendMessageEvent>(_onSendMessage);
     on<ClearChatEvent>(_onClearChat);
     on<BrandingImageUploadedEvent>(_onBrandingImageUploaded);
+    on<ConfirmAiActionsEvent>(_onConfirmAiActions);
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -114,10 +115,21 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       }
 
       // ── SEND TO LLM ────────────────────────────────────────────────
+      // onToken fires only on the gateway path — stream the answer live.
       final result = await _repository.sendMessage(
         userMessage: userMsg,
         history: _history,
         sessionId: _sessionId,
+        onToken: (textSoFar) {
+          if (emit.isDone) return;
+          emit(ChatStreaming(
+            messages: [
+              ..._history,
+              ChatMessage(role: 'assistant', content: textSoFar),
+            ],
+            partialText: textSoFar,
+          ));
+        },
       );
 
       if (result.type == ActionResultType.startBillFlow) {
@@ -156,13 +168,53 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         detailCard: result.detailCard,
         isCustomerNotFound: result.isCustomerNotFound,
         isSubscriptionRequired: result.isSubscriptionRequired,
+        pendingActions: result.pendingActions,
+        conversationId: result.conversationId,
       );
       emit(ChatSuccess(messages: List.from(_history), lastResult: result));
 
     } catch (e) {
-      const friendlyMsg = '⚠️ Kuch gadbad ho gayi. Thodi der baad try karein.';
+      const friendlyMsg = '⚠️ There are some error . Try again after sometime';
       _addMsg(role: 'assistant', content: friendlyMsg);
       emit(ChatError(messages: List.from(_history), error: friendlyMsg));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  CONFIRM DESTRUCTIVE AI ACTIONS (gateway path)
+  // ══════════════════════════════════════════════════════════════════
+  Future<void> _onConfirmAiActions(
+      ConfirmAiActionsEvent event,
+      Emitter<ChatState> emit,
+      ) async {
+    // Remove the Yes/No buttons from whichever message carried these actions.
+    final ids = event.actions.map((a) => a.id).toSet();
+    for (var i = 0; i < _history.length; i++) {
+      final m = _history[i];
+      final pa = m.pendingActions;
+      if (pa != null && pa.any((a) => ids.contains(a.id))) {
+        _history[i] = m.copyWith(clearPendingActions: true);
+      }
+    }
+    emit(ChatLoading(messages: List.from(_history)));
+
+    try {
+      final result = await _repository.applyConfirmedActions(
+        actions: event.actions,
+        conversationId: event.conversationId,
+        approved: event.approved,
+      );
+      _addMsg(
+        role: 'assistant',
+        content: result.reply,
+        tableData: result.tableData,
+        detailCard: result.detailCard,
+      );
+      emit(ChatSuccess(messages: List.from(_history), lastResult: result));
+    } catch (_) {
+      const msg = '⚠️ Kuch gadbad ho gayi. Dobara try karein.';
+      _addMsg(role: 'assistant', content: msg);
+      emit(ChatError(messages: List.from(_history), error: msg));
     }
   }
 
@@ -349,6 +401,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Map<String, dynamic>? detailCard,
     bool isCustomerNotFound = false,
     bool isSubscriptionRequired = false,
+    List<PendingAiAction>? pendingActions,
+    String? conversationId,
   }) {
     _history.add(ChatMessage(
       role: role,
@@ -357,6 +411,8 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       detailCard: detailCard,
       isCustomerNotFound: isCustomerNotFound,
       isSubscriptionRequired: isSubscriptionRequired,
+      pendingActions: pendingActions,
+      conversationId: conversationId,
     ));
   }
 }

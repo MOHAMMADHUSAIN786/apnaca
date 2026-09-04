@@ -1,0 +1,71 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ApnaCA — Cloud Storage security rules
+//
+//  The SQLite database backups here contain a tenant's ENTIRE business:
+//  every customer, phone number, bill and revenue figure. Before this pass,
+//  a permissive/default rule would let any signed-in user download all of it.
+//
+//  These rules scope every object to its owning account, with a Firestore
+//  lookup so an active team member can reach their owner's files.
+//
+//  ⚠️ TEST BEFORE DEPLOY (emulator + every upload/download path: auto-sync,
+//  logout backup, company switch, team-member login, branding upload,
+//  profile picture).
+//    firebase deploy --only storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+
+    function hasTeamAccess() {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/team_access/$(uid()));
+    }
+    function callerOwnerUid() {
+      return firestore.get(/databases/(default)/documents/team_access/$(uid())).data.ownerUid;
+    }
+
+    function isImageUnder(mb) {
+      return request.resource.size < mb * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Per-account SQLite backups.
+    //   user_{uid}.db  |  user_{uid}_comp_{companyId}.db
+    match /database_backups/{fileName} {
+      allow read, write: if isSignedIn() && (
+        fileName.matches('^user_' + uid() + '(_comp_.+)?[.]db$')
+        || (hasTeamAccess()
+            && fileName.matches('^user_' + callerOwnerUid() + '(_comp_.+)?[.]db$'))
+      );
+    }
+
+    // Company logo & signature — users/{ownerUid}/branding/{file}
+    match /users/{ownerUid}/branding/{fileName} {
+      allow read: if isSignedIn() && (
+        ownerUid == uid()
+        || (hasTeamAccess() && callerOwnerUid() == ownerUid)
+      );
+      allow write: if isSignedIn() && ownerUid == uid() && isImageUnder(5);
+    }
+
+    // Profile pictures — profile_pictures/{uid}.{ext}
+    // Readable by any signed-in user (shown in team lists); writable by owner.
+    match /profile_pictures/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && fileName.matches('^' + uid() + '[.].+$')
+        && isImageUnder(5);
+    }
+
+    // Default deny.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
